@@ -1,0 +1,8 @@
+{
+  "name": "Remix: CRM",
+  "description": "Premium airline reservation, travel authorization, and payment processing CRM for travel agencies and consolidators.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
