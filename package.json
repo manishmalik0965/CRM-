@@ -1,11 +1,11 @@
 {
-  "name": "react-example",
+  "name": "crm-saas",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && node build-zip.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
@@ -68,6 +68,7 @@
     "@types/uuid": "^10.0.0",
     "archiver": "^8.0.0",
     "autoprefixer": "^10.4.21",
+    "bestzip": "^3.0.1",
     "playwright": "^1.60.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",

@@ -39,7 +39,7 @@ export default function Settings({ profile }: { profile?: any }) {
 
   const [systemStats, setSystemStats] = useState({ users: 0, bookings: 0 });
   const isSystemAdmin = profile?.email === 'manishmalik0965@gmail.com';
-  const canEditBranding = isSystemAdmin || profile?.role === 'Admin' || profile?.role === 'Manager';
+  const canEditBranding = isSystemAdmin;
 
   useEffect(() => {
     async function loadSettings() {

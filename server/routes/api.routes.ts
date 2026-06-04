@@ -247,6 +247,27 @@ router.get('/bookings', async (req, res) => {
     }
 });
 
+router.get('/settings/public', async (req, res) => {
+    try {
+        const [rows]: any = await db.query('SELECT settings_json FROM settings WHERE company_id = ?', ['legacy-tenant-1']);
+        if (rows.length > 0) {
+            const settingsObj = typeof rows[0].settings_json === 'string' ? JSON.parse(rows[0].settings_json) : rows[0].settings_json;
+            return res.json({
+                organizationName: settingsObj?.organizationName || 'BLACKGRASS CRM',
+                primaryColor: settingsObj?.primaryColor || '#0f172a',
+                logoUrl: settingsObj?.logoUrl || '/logo.svg'
+            });
+        }
+        res.json({
+            organizationName: 'BLACKGRASS CRM',
+            primaryColor: '#0f172a',
+            logoUrl: '/logo.svg'
+        });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 router.get('/settings', async (req, res) => {
     try {
         const companyId = getCompanyId(req);
@@ -313,27 +334,31 @@ router.get('/clients/tenant', async (req, res) => {
         const [rows]: any = await db.query(query, params);
         if (rows.length > 0) {
             const row = rows[0];
+            const isLandlordMode = process.env.SaaS_LANDLORD_MODE === 'true';
+            const isActive = isLandlordMode ? !!row.is_active : true;
             return res.json({
                 id: row.id,
                 name: row.name,
                 domain: row.domain,
-                isActive: !!row.is_active
+                isActive: isActive
             });
         }
 
-        // Default fallback to legacy landlord tenant if localhost or loopback is requested
-        if (domain && (domain.includes('localhost') || domain.includes('run.app') || domain.includes('app.itconflict.xyz'))) {
-            return res.json({
-                id: 'legacy-tenant-1',
-                name: 'Default Company',
-                domain: domain,
-                isActive: true
-            });
-        }
-
-        res.status(404).json({ error: 'Tenant not found' });
+        // Default fallback to legacy landlord tenant if localhost, run.app, itconflict.xyz, or any custom domain is requested
+        return res.json({
+            id: 'legacy-tenant-1',
+            name: 'Default Company',
+            domain: domain || 'localhost',
+            isActive: true
+        });
     } catch (e: any) {
-        res.status(500).json({ error: e.message });
+        // Fallback even on DB connection error to legacy-tenant-1 to avoid blocking user setup
+        return res.json({
+            id: 'legacy-tenant-1',
+            name: 'Default Company',
+            domain: 'localhost',
+            isActive: true
+        });
     }
 });
 
@@ -342,11 +367,13 @@ router.get('/clients/:id', async (req, res) => {
         const [rows]: any = await db.query('SELECT * FROM companies WHERE id = ?', [req.params.id]);
         if (rows.length > 0) {
             const row = rows[0];
+            const isLandlordMode = process.env.SaaS_LANDLORD_MODE === 'true';
+            const isActive = isLandlordMode ? !!row.is_active : true;
             return res.json({
                 id: row.id,
                 name: row.name,
                 domain: row.domain,
-                isActive: !!row.is_active
+                isActive: isActive
             });
         }
         
@@ -362,6 +389,14 @@ router.get('/clients/:id', async (req, res) => {
 
         res.status(404).json({ error: 'Tenant not found' });
     } catch (e: any) {
+        if (req.params.id === 'legacy-tenant-1') {
+            return res.json({
+                id: 'legacy-tenant-1',
+                name: 'Default Company',
+                domain: 'localhost',
+                isActive: true
+            });
+        }
         res.status(500).json({ error: e.message });
     }
 });
@@ -698,6 +733,7 @@ router.post('/settings/clients', requireAuth, async (req, res) => {
         const currentCompanyId = currentUser?.company_id || currentUser?.companyId || 'legacy-tenant-1';
         
         let smtpProfile: any = null;
+        let superAdminBranding: any = null;
         try {
             const [settingsRows]: any = await conn.execute('SELECT settings_json FROM settings WHERE company_id = ?', [currentCompanyId]);
             if (settingsRows.length > 0) {
@@ -705,6 +741,7 @@ router.post('/settings/clients', requireAuth, async (req, res) => {
                     ? JSON.parse(settingsRows[0].settings_json) 
                     : settingsRows[0].settings_json;
                 smtpProfile = settingsObj?.smtpProfiles?.[0];
+                superAdminBranding = settingsObj;
             }
         } catch (e: any) {
             console.error('[Clients Service] Failed to retrieve SMTP settings:', e);
@@ -720,7 +757,8 @@ router.post('/settings/clients', requireAuth, async (req, res) => {
             const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000';
             const appUrl = `${protocol}://${host}`;
 
-            const html = generateTenantInvitationEmail(adminEmail, adminPassword, appUrl, name);
+            const customLogoUrl = superAdminBranding?.logoUrl || '';
+            const html = generateTenantInvitationEmail(adminEmail, adminPassword, appUrl, name, customLogoUrl);
 
             const transporter = nodemailer.createTransport({
                 host: smtpProfile.host || 'smtp.gmail.com',
@@ -729,10 +767,12 @@ router.post('/settings/clients', requireAuth, async (req, res) => {
                 auth: { user: smtpProfile.email, pass: smtpProfile.appPassword.replace(/\s+/g, '') }
             });
 
+            const brandName = superAdminBranding?.organizationName || 'Secure Auth CRM';
+
             await transporter.sendMail({
-                from: `"Secure Auth CRM" <${smtpProfile.email}>`,
+                from: `"${brandName}" <${smtpProfile.email}>`,
                 to: adminEmail,
-                subject: `Welcome - Secure Auth CRM Account Created`,
+                subject: `Welcome - ${brandName} Account Created`,
                 html: html
             });
         } catch (mailErr: any) {

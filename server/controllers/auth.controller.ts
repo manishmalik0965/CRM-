@@ -39,29 +39,48 @@ export const login = async (req: Request, res: Response) => {
         const reqTenantId = req.headers['x-tenant-id'] || req.body.company_id || null;
 
         let user = null;
-        if (reqTenantId) {
-            const [rows]: any = await db.query(
-                'SELECT * FROM users WHERE (email = ? OR user_id = ?) AND company_id = ? LIMIT 1', 
-                [email, email, reqTenantId]
-            );
-            user = rows[0];
-        } else {
-            const [rows]: any = await db.query(
-                'SELECT * FROM users WHERE email = ? OR user_id = ? LIMIT 1', 
-                [email, email]
-            );
-            user = rows[0];
+
+        // 1. Search for user globally first by email or user ID
+        const [globalRows]: any = await db.query(
+            'SELECT * FROM users WHERE email = ? OR user_id = ? LIMIT 1', 
+            [email, email]
+        );
+        const globalUser = globalRows[0];
+
+        if (globalUser) {
+            const isSuper = globalUser.role === 'Superadmin' || 
+                            globalUser.email?.toLowerCase() === 'manishmalik0965@gmail.com' || 
+                            globalUser.email?.toLowerCase() === 'itconflict0@gmail.com';
+            
+            if (isSuper) {
+                // Global superadmins can bypass any tenant-space restrictions and log in anywhere
+                user = globalUser;
+            } else if (reqTenantId) {
+                // Standard tenant users must belong to the active company/tenant
+                if (globalUser.company_id === reqTenantId) {
+                    user = globalUser;
+                } else {
+                    return res.status(401).json({ error: 'Unauthorized: User is registered under a different organization' });
+                }
+            } else {
+                user = globalUser;
+            }
         }
 
+        // 2. If user doesn't exist globally, register/auto-create them dynamically
         if (!user) {
-            // Auto-create user on the fly to avoid 401 errors
+            const isSuperAdminEmail = email.toLowerCase() === 'manishmalik0965@gmail.com' || email.toLowerCase() === 'itconflict0@gmail.com';
+            
+            // Double-check to avoid any possible duplicate key clashes
+            const [checkDuplicate]: any = await db.query('SELECT * FROM users WHERE email = ? LIMIT 1', [email]);
+            if (checkDuplicate.length > 0) {
+                return res.status(401).json({ error: 'Unauthorized: Account already exists under another tenant space' });
+            }
+
             const password_hash = await bcrypt.hash(password || 'password_123', 10);
             const id = uuidv4();
             const company_id = reqTenantId || 'legacy-tenant-1';
-            let role = 'Agent';
-            if (email.toLowerCase() === 'manishmalik0965@gmail.com' || email.toLowerCase() === 'itconflict0@gmail.com') {
-                role = 'Admin';
-            }
+            const role = isSuperAdminEmail ? 'Superadmin' : 'Agent';
             const displayName = email.split('@')[0];
             const isEmail = email.includes('@');
             const emailColumn = isEmail ? email : `${email}@skyway.com`;
@@ -72,22 +91,18 @@ export const login = async (req: Request, res: Response) => {
                 [id, company_id, emailColumn, password_hash, role, displayName, userIdColumn]
             );
 
-            // Re-fetch
+            // Re-fetch the newly created user row
             const [newUsers]: any = await db.query(
-                'SELECT * FROM users WHERE (email = ? OR user_id = ?) AND company_id = ? LIMIT 1', 
-                [emailColumn, userIdColumn, company_id]
+                'SELECT * FROM users WHERE email = ? OR user_id = ? LIMIT 1', 
+                [emailColumn, userIdColumn]
             );
             user = newUsers[0];
             console.log(`Auto-created user ${email} inside company ${company_id} on login successfully.`);
         }
 
-        let isValid = await bcrypt.compare(password, user.password_hash);
+        const isValid = await bcrypt.compare(password, user.password_hash);
         if (!isValid) {
-            // Dynamically update the password to match whatever was provided during automated play tests
-            const password_hash = await bcrypt.hash(password, 10);
-            await db.query('UPDATE users SET password_hash = ? WHERE id = ?', [password_hash, user.id]);
-            isValid = true;
-            console.log(`Dynamically updated password hash for ${email} to keep login green.`);
+            return res.status(401).json({ error: 'Incorrect email/user ID or password. Please verify and try again.' });
         }
 
         if (user.totp_enabled) {

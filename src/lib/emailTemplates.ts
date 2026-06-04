@@ -535,9 +535,16 @@ export const generateRefundEmail = (data: EmailData) => generateEmailTemplate('r
 export const generateCancelEmail = (data: EmailData) => generateEmailTemplate('cancel', data);
 export const generateChangesEmail = (data: EmailData) => generateEmailTemplate('changes', data);
 
-export const generateTenantInvitationEmail = (tenantEmail: string, tempPassword?: string, appUrl?: string, orgName?: string) => {
+export const generateTenantInvitationEmail = (tenantEmail: string, tempPassword?: string, appUrl?: string, orgName?: string, logoUrl?: string) => {
   const cleanedAppUrl = (appUrl || '').replace(/\/$/, '');
-  const logoUrl = `${cleanedAppUrl}/logo.png`;
+  let resolvedLogo = logoUrl;
+  if (!resolvedLogo) {
+    resolvedLogo = `${cleanedAppUrl}/logo.png`;
+  } else if (!resolvedLogo.startsWith('http') && !resolvedLogo.startsWith('data:')) {
+    resolvedLogo = `${cleanedAppUrl}${resolvedLogo.startsWith('/') ? '' : '/'}${resolvedLogo}`;
+  }
+
+  const resolvedOrgName = orgName || 'SKY CRM';
 
   return `
     <!DOCTYPE html>
@@ -547,7 +554,7 @@ export const generateTenantInvitationEmail = (tenantEmail: string, tempPassword?
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <meta name="color-scheme" content="light dark">
       <meta name="supported-color-schemes" content="light dark">
-      <title>Welcome to SKY CRM</title>
+      <title>Welcome to ${resolvedOrgName}</title>
       <!--[if mso]>
       <noscript>
         <xml>
@@ -618,8 +625,8 @@ export const generateTenantInvitationEmail = (tenantEmail: string, tempPassword?
                   <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom: 32px;">
                     <tr>
                       <td align="center">
-                        <img src="${logoUrl}" alt="SKY CRM Logo" width="140" style="display: block; width: 140px; max-width: 140px; height: auto; border-radius: 18px; margin-bottom: 24px; box-shadow: 0 4px 10px rgba(0,0,0,0.06);" />
-                        <h1 style="margin: 0 0 8px 0; font-size: 26px; font-weight: 800; color: #0f172a; letter-spacing: -0.02em; line-height: 1.25;">Welcome to SKY CRM</h1>
+                        <img src="${resolvedLogo}" alt="${resolvedOrgName} Logo" width="140" style="display: block; width: 140px; max-width: 140px; height: auto; border-radius: 18px; margin-bottom: 24px; box-shadow: 0 4px 10px rgba(0,0,0,0.06);" />
+                        <h1 style="margin: 0 0 8px 0; font-size: 26px; font-weight: 800; color: #0f172a; letter-spacing: -0.02em; line-height: 1.25;">Welcome to ${resolvedOrgName}</h1>
                         <p style="margin: 0; font-size: 15px; color: #64748b; line-height: 1.5; font-weight: 500;">Your workspace has been successfully created and is ready to use.</p>
                       </td>
                     </tr>

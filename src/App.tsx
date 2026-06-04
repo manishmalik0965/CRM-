@@ -67,7 +67,7 @@ export default function AppWrapper() {
   useEffect(() => {
     async function determineTenant() {
       const hostname = window.location.hostname;
-      const isSystemDomain = hostname.includes('localhost') || hostname.includes('run.app') || hostname.includes('app.itconflict.xyz');
+      const isSystemDomain = hostname.includes('localhost') || hostname.includes('run.app') || hostname.includes('itconflict.xyz');
       
       const searchParams = new URLSearchParams(window.location.search);
       const urlTenant = searchParams.get('tenant');
@@ -82,19 +82,26 @@ export default function AppWrapper() {
              setActiveClient(res.data);
              setClientId(res.data.id);
              localStorage.setItem('tenantId', res.data.id);
-             if (!res.data.isActive) setIsSuspended(true);
+             setIsSuspended(res.data.isActive === false);
           } else {
-             if (!isSystemDomain) setIsSuspended(true);
+             // Fallback to default instead of suspending
+             setActiveClient({ id: 'legacy-tenant-1', name: 'Default Company', domain: hostname, isActive: true });
+             setClientId('legacy-tenant-1');
+             localStorage.setItem('tenantId', 'legacy-tenant-1');
           }
         } catch (e) {
           console.error("Failed to load tenant", e);
+          // Fallback to default on error so the app loads
+          setActiveClient({ id: 'legacy-tenant-1', name: 'Default Company', domain: hostname, isActive: true });
+          setClientId('legacy-tenant-1');
+          localStorage.setItem('tenantId', 'legacy-tenant-1');
         }
       } else if (clientId) {
         try {
           const res = await api.get(`/clients/${clientId}`);
           if (res.data) {
             setActiveClient(res.data);
-            if (!res.data.isActive) setIsSuspended(true);
+            setIsSuspended(res.data.isActive === false);
           }
         } catch(e) {}
       }
@@ -186,8 +193,10 @@ function App() {
         
         try {
           const notifRes = await api.get('/bookings/recent-updates');
-          setNotifications(notifRes.data);
-        } catch(e) {}
+          setNotifications(Array.isArray(notifRes.data) ? notifRes.data : []);
+        } catch(e) {
+          setNotifications([]);
+        }
         
         setLoading(false);
       };
@@ -206,8 +215,10 @@ function App() {
       const notifInterval = setInterval(async () => {
          try {
            const res = await api.get('/bookings/recent-updates');
-           setNotifications(res.data);
-         } catch(e) {}
+           setNotifications(Array.isArray(res.data) ? res.data : []);
+         } catch(e) {
+           setNotifications([]);
+         }
       }, 60000);
       
       return () => {
@@ -231,6 +242,43 @@ function App() {
       localStorage.setItem('darkMode', 'false');
     }
   }, [darkMode]);
+
+  // Automatic session timeout (30 minutes of inactivity)
+  useEffect(() => {
+    if (!user) return;
+
+    const timeoutDuration = 30 * 60 * 1000; // 30 minutes in milliseconds
+    let timeoutId: NodeJS.Timeout;
+
+    const handleInactivityLogout = () => {
+      logout();
+      toast.error("Session expired due to 30 minutes of inactivity. Please login again.");
+      navigate('/login' + window.location.search);
+    };
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(handleInactivityLogout, timeoutDuration);
+    };
+
+    // Events to track user activity
+    const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+    
+    // Set initial timer
+    resetTimer();
+
+    // Listen to activities
+    activityEvents.forEach((event) => {
+      window.addEventListener(event, resetTimer);
+    });
+
+    return () => {
+      clearTimeout(timeoutId);
+      activityEvents.forEach((event) => {
+        window.removeEventListener(event, resetTimer);
+      });
+    };
+  }, [user, navigate, logout]);
 
   // Update favicon dynamically when branding settings load
   useEffect(() => {
@@ -325,10 +373,10 @@ function App() {
     }
   };
 
-  const isSystemAdmin = user?.email === 'manishmalik0965@gmail.com';
+  const isSystemAdmin = user?.email === 'manishmalik0965@gmail.com' || profile?.role === 'Superadmin' || user?.role === 'Superadmin';
   const isTenantAdmin = profile?.role === 'Admin' && !isSystemAdmin;
-  const isAdmin = profile?.role === 'Admin' && !isTenantAdmin;
-  const isManager = (profile?.role === 'Admin' || profile?.role === 'Manager') && !isTenantAdmin;
+  const isAdmin = (profile?.role === 'Admin' || profile?.role === 'Superadmin' || isSystemAdmin) && !isTenantAdmin;
+  const isManager = (profile?.role === 'Admin' || profile?.role === 'Manager' || profile?.role === 'Superadmin' || isSystemAdmin) && !isTenantAdmin;
   const isAgent = !!profile && !isTenantAdmin; // Everyone with a profile is at least an agent
 
   // Strict role boundaries
@@ -546,7 +594,7 @@ function App() {
                   <Popover>
                     <PopoverTrigger className="relative outline-none cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 p-2 rounded-full transition-colors border-none bg-transparent flex items-center justify-center">
                       <Bell className="w-5 h-5 text-slate-600 dark:text-slate-400" />
-                      {notifications.length > 0 && (
+                      {Array.isArray(notifications) && notifications.length > 0 && (
                         <span className="absolute top-1.5 right-1.5 w-3.5 h-3.5 bg-red-500 text-white text-[8px] flex items-center justify-center rounded-full border-2 border-white dark:border-slate-900 font-bold">
                           {notifications.length}
                         </span>
@@ -557,7 +605,7 @@ function App() {
                         <h4 className="text-[10px] uppercase font-black tracking-widest text-slate-500">Recent Updates</h4>
                       </div>
                       <ScrollArea className="max-h-[300px]">
-                        {notifications.length === 0 ? (
+                        {(!Array.isArray(notifications) || notifications.length === 0) ? (
                           <div className="px-4 py-8 text-center text-xs text-slate-400">No new notifications</div>
                         ) : (
                           notifications.map((notif: any) => (

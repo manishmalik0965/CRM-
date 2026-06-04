@@ -96,8 +96,8 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
   const [showFilters, setShowFilters] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ key: 'createdAt', direction: 'desc' });
 
-  const isAdmin = profile?.role === 'Admin';
-  const isManager = profile?.role === 'Admin' || profile?.role === 'Manager';
+  const isAdmin = profile?.role === 'Admin' || profile?.role === 'Superadmin';
+  const isManager = profile?.role === 'Admin' || profile?.role === 'Manager' || profile?.role === 'Superadmin';
 
   const [settings, setSettings] = useState<any>(null);
 
