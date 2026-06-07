@@ -65,10 +65,13 @@ export default function LoginPage() {
         toast.info("Please enter your Authenticator code.");
       } else {
         localStorage.setItem('accessToken', res.data.accessToken);
+        if (res.data.user?.companyId) {
+          localStorage.setItem('tenantId', res.data.user.companyId);
+        }
         sessionStorage.setItem('mfa_verified', 'true');
         setUser(res.data.user);
         toast.success("Logged in successfully!");
-        navigate('/');
+        window.location.href = '/';
       }
     } catch (err: any) {
       console.error("Auth failed", err);
@@ -88,10 +91,13 @@ export default function LoginPage() {
     try {
       const res = await api.post('/auth/verify-totp', { token: otpCode, mfaToken });
       localStorage.setItem('accessToken', res.data.accessToken);
+      if (res.data.user?.companyId) {
+        localStorage.setItem('tenantId', res.data.user.companyId);
+      }
       sessionStorage.setItem('mfa_verified', 'true');
       setUser(res.data.user);
       toast.success("Multifactor authentication verified!");
-      navigate('/');
+      window.location.href = '/';
     } catch (e: any) {
       console.error("OTP verification failed", e);
       const errMsg = e.response?.data?.error || e.message || "Verification failed";

@@ -257,13 +257,20 @@ export default function Dashboard() {
         setChartDataMonthly(monthlyData);
 
         if (managerRole) {
-          const agents: Record<string, { name: string; revenue: number; bookings: number }> = {};
+          const agents: Record<string, { name: string; revenue: number; bookings: number; successfulAuth: number; securedAmount: number }> = {};
           docs.forEach((d: any) => {
             const agentName = d.agentName || 'Unknown Agent';
             if (!agents[agentName]) {
-              agents[agentName] = { name: agentName, revenue: 0, bookings: 0 };
+              agents[agentName] = { name: agentName, revenue: 0, bookings: 0, successfulAuth: 0, securedAmount: 0 };
             }
             agents[agentName].bookings += 1;
+
+            const isAuthorized = ['authorized', 'email auth confirm', 'ready to charge', 'sent for charge', 'charged'].includes(d.status);
+            if (isAuthorized) {
+              agents[agentName].successfulAuth += 1;
+              agents[agentName].securedAmount += (parseFloat(d.totalAmount) || 0);
+            }
+
             if (d.status === 'charged') {
               agents[agentName].revenue += (parseFloat(d.totalAmount) || 0);
             } else if (d.status === 'chargeback') {
@@ -272,8 +279,9 @@ export default function Dashboard() {
           });
           const sortedAgents = Object.values(agents).map((a: any) => ({
             ...a,
-            revenue: Math.max(0, a.revenue)
-          })).sort((a: any, b: any) => b.revenue - a.revenue).slice(0, 5);
+            revenue: Math.max(0, a.revenue),
+            securedAmount: Math.max(0, a.securedAmount)
+          })).sort((a: any, b: any) => b.securedAmount - a.securedAmount).slice(0, 5);
           setAgentStats(sortedAgents);
         }
 
@@ -637,17 +645,28 @@ export default function Dashboard() {
             <CardContent className="p-10">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
                 {agentStats.map((agent, i) => (
-                  <div key={i} className="bg-slate-50 dark:bg-slate-800 p-6 rounded-3xl flex flex-col items-center text-center justify-center space-y-4 border border-slate-100 dark:border-slate-700 hover:border-blue-500 hover:shadow-lg transition-all">
+                  <div key={i} className="bg-slate-50 dark:bg-slate-800 p-6 rounded-3xl flex flex-col items-center text-center justify-center space-y-4 border border-slate-100 dark:border-slate-700 hover:border-blue-500 hover:shadow-lg transition-all w-full">
                     <div className="w-16 h-16 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-600 dark:text-blue-400 font-black text-xl shadow-inner">
                       {agent.name.charAt(0).toUpperCase()}
                     </div>
-                    <div>
-                      <p className="font-black text-slate-900 dark:text-white text-lg leading-tight uppercase tracking-tight">{agent.name}</p>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{agent.bookings} Bookings</p>
+                    <div className="w-full">
+                      <p className="font-black text-slate-900 dark:text-white text-base leading-tight uppercase tracking-tight truncate">{agent.name}</p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{agent.bookings} Bookings Created</p>
                     </div>
-                    <Badge variant="outline" className="px-4 py-2 bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/50 font-black text-sm shadow-sm">
-                      ${agent.revenue.toLocaleString()}
-                    </Badge>
+                    <div className="flex flex-col gap-1.5 items-center bg-white dark:bg-slate-900 p-3 rounded-2xl w-full border border-slate-100 dark:border-slate-800/80">
+                      <div className="flex justify-between w-full text-[9px] font-black uppercase text-slate-400 gap-2">
+                        <span>Secured:</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">${agent.securedAmount.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between w-full text-[9px] font-black uppercase text-slate-400 gap-2">
+                        <span>Success Auth:</span>
+                        <span className="text-blue-600 dark:text-blue-400 font-extrabold">{agent.successfulAuth}</span>
+                      </div>
+                      <div className="flex justify-between w-full text-[9px] font-black uppercase text-slate-400 gap-2">
+                        <span>Paid Rev:</span>
+                        <span className="text-indigo-600 dark:text-indigo-400 font-extrabold">${agent.revenue.toLocaleString()}</span>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>

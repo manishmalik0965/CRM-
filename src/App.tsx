@@ -8,7 +8,9 @@ import {
   Sun,
   Plane,
   Menu,
-  X
+  X,
+  Check,
+  CheckCircle2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -166,7 +168,50 @@ function App() {
 
   const [settings, setSettings] = useState<any>(null);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [readNotifications, setReadNotifications] = useState<string[]>([]);
   const [agentStatus, setAgentStatus] = useState<'Live' | 'Break' | 'Logged Out'>('Live');
+
+  useEffect(() => {
+    if (user?.id) {
+      try {
+        const stored = localStorage.getItem(`read_notifications_${user.id}`);
+        setReadNotifications(stored ? JSON.parse(stored) : []);
+      } catch (e) {
+        setReadNotifications([]);
+      }
+    } else {
+      setReadNotifications([]);
+    }
+  }, [user]);
+
+  const toggleReadNotification = (id: string | number) => {
+    const idStr = String(id);
+    const userId = user?.id || 'guest';
+    let updated;
+    if (readNotifications.includes(idStr)) {
+      updated = readNotifications.filter(x => x !== idStr);
+    } else {
+      updated = [...readNotifications, idStr];
+    }
+    setReadNotifications(updated);
+    try {
+      localStorage.setItem(`read_notifications_${userId}`, JSON.stringify(updated));
+    } catch (e) {}
+  };
+
+  const markAllAsRead = () => {
+    const userId = user?.id || 'guest';
+    const allIds = notifications.map(notif => String(notif.id));
+    const merged = Array.from(new Set([...readNotifications, ...allIds]));
+    setReadNotifications(merged);
+    try {
+      localStorage.setItem(`read_notifications_${userId}`, JSON.stringify(merged));
+    } catch (e) {}
+  };
+
+  const unreadCount = Array.isArray(notifications)
+    ? notifications.filter((notif: any) => !readNotifications.includes(String(notif.id))).length
+    : 0;
 
   useEffect(() => {
     if (isAuthLoading) return;
@@ -594,39 +639,70 @@ function App() {
                   <Popover>
                     <PopoverTrigger className="relative outline-none cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 p-2 rounded-full transition-colors border-none bg-transparent flex items-center justify-center">
                       <Bell className="w-5 h-5 text-slate-600 dark:text-slate-400" />
-                      {Array.isArray(notifications) && notifications.length > 0 && (
+                      {unreadCount > 0 && (
                         <span className="absolute top-1.5 right-1.5 w-3.5 h-3.5 bg-red-500 text-white text-[8px] flex items-center justify-center rounded-full border-2 border-white dark:border-slate-900 font-bold">
-                          {notifications.length}
+                          {unreadCount}
                         </span>
                       )}
                     </PopoverTrigger>
                     <PopoverContent className="w-80 p-0 rounded-2xl shadow-2xl border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden" align="end">
                       <div className="px-4 py-3 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
                         <h4 className="text-[10px] uppercase font-black tracking-widest text-slate-500">Recent Updates</h4>
+                        {unreadCount > 0 && (
+                          <button
+                            onClick={markAllAsRead}
+                            className="text-[9px] font-black uppercase tracking-widest text-blue-600 dark:text-blue-400 hover:opacity-80 transition-opacity cursor-pointer"
+                          >
+                            Mark all read
+                          </button>
+                        )}
                       </div>
                       <ScrollArea className="max-h-[300px]">
                         {(!Array.isArray(notifications) || notifications.length === 0) ? (
                           <div className="px-4 py-8 text-center text-xs text-slate-400">No new notifications</div>
                         ) : (
-                          notifications.map((notif: any) => (
-                            <Link to={`/bookings/edit/${notif.id}`} key={notif.id} className="group flex flex-col p-4 border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-colors">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-[10px] font-bold text-slate-900 dark:text-slate-100 uppercase tracking-widest">{notif.crmId}</span>
-                                <span className={cn(
-                                  "text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded",
-                                  notif.status === 'authorized' ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400" :
-                                  notif.status === 'charged' ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400" :
-                                  notif.status === 'chargeback' ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400" :
-                                  "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-                                )}>
-                                  {notif.status}
-                                </span>
+                          notifications.map((notif: any) => {
+                            const isRead = readNotifications.includes(String(notif.id));
+                            return (
+                              <div key={notif.id} className={cn("group/notif flex items-center justify-between border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-colors pr-2", isRead && "opacity-50")}>
+                                <Link to={`/bookings/edit/${notif.id}`} className="flex-1 flex flex-col p-4 pr-1">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-[10px] font-bold text-slate-900 dark:text-slate-100 uppercase tracking-widest">{notif.crmId}</span>
+                                    <span className={cn(
+                                      "text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded",
+                                      notif.status === 'authorized' ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400" :
+                                      notif.status === 'charged' ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400" :
+                                      notif.status === 'chargeback' ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400" :
+                                      "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                                    )}>
+                                      {notif.status}
+                                    </span>
+                                  </div>
+                                  <span className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1">
+                                    {(Array.isArray(notif.passengerNames) ? notif.passengerNames.join(', ') : notif.passengerNames) || 'No Pax Name'} • {notif.airlineName}
+                                  </span>
+                                </Link>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    toggleReadNotification(notif.id);
+                                  }}
+                                  className={cn(
+                                    "p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors shrink-0",
+                                    isRead ? "text-emerald-500 dark:text-emerald-400" : "text-slate-300 dark:text-slate-600 hover:text-slate-600 dark:hover:text-slate-300"
+                                  )}
+                                  title={isRead ? "Mark as unread" : "Mark as read"}
+                                >
+                                  {isRead ? (
+                                    <Check className="w-4 h-4 text-emerald-500 stroke-[3]" />
+                                  ) : (
+                                    <CheckCircle2 className="w-4 h-4" />
+                                  )}
+                                </button>
                               </div>
-                              <span className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1">
-                                {(Array.isArray(notif.passengerNames) ? notif.passengerNames.join(', ') : notif.passengerNames) || 'No Pax Name'} • {notif.airlineName}
-                              </span>
-                            </Link>
-                          ))
+                            );
+                          })
                         )}
                       </ScrollArea>
                     </PopoverContent>

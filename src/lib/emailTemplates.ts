@@ -23,6 +23,7 @@ export interface EmailData {
   currency: string;
   airlineDomain?: string;
   authLink?: string;
+  isPreview?: boolean;
   airlineCharges?: number;
   serviceFee?: number;
   refundQuote?: number;
@@ -355,14 +356,27 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
   }
 
   let buttonArea = "";
+  const isPreview = data.isPreview || data.authLink?.endsWith('/preview') || data.authLink?.includes('/preview');
+
   if (type !== 'confirmation') {
     const buttonText = type === 'auth' ? 'I Authorise' : (type === 'refund' ? 'Authorize Refund' : (type === 'cancel' ? 'Authorize Cancel & Rebook' : 'Authorize Changes'));
-    buttonArea = `
-      <div style="text-align: center; margin: 40px 0;">
-        <a href="${data.authLink}${data.authLink?.includes('?') ? '&' : '?'}direct=true" class="button" style="background-color: ${theme.primary}; box-shadow: 0 4px 6px -1px ${theme.primary}40;">${buttonText}</a>
-        <p style="font-size: 11px; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 15px;">Secure one-click verification protocol</p>
-      </div>
-    `;
+    
+    if (isPreview) {
+      buttonArea = `
+        <div style="text-align: center; margin: 40px 0; padding: 25px; border: 2px dashed ${theme.primary}50; border-radius: 12px; background-color: #f8fafc;">
+          <div style="font-size: 24px; margin-bottom: 10px;">🛡️</div>
+          <p style="font-size: 14px; font-weight: 700; color: ${theme.primary}; margin: 0 0 5px 0;">[ ${buttonText.toUpperCase()} BUTTON HIDDEN IN PREVIEW ]</p>
+          <p style="font-size: 12px; color: #64748b; margin: 0; line-height: 1.5;">To maintain secure CRM compliance, the active verification link is only embedded inside the final email transmitted directly to the client.</p>
+        </div>
+      `;
+    } else {
+      buttonArea = `
+        <div style="text-align: center; margin: 40px 0;">
+          <a href="${data.authLink}${data.authLink?.includes('?') ? '&' : '?'}direct=true" class="button" style="background-color: ${theme.primary}; box-shadow: 0 4px 6px -1px ${theme.primary}40;">${buttonText}</a>
+          <p style="font-size: 11px; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 15px;">Secure one-click verification protocol</p>
+        </div>
+      `;
+    }
   } else {
     buttonArea = `<p style="font-size: 13px; color: #64748b; line-height: 1.6;">Our team is performing final verification. You will receive your flight vouchers and electronic tickets in a separate transmission shortly. Thank you for your cooperation.</p>`;
   }

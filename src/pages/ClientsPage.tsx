@@ -38,6 +38,19 @@ export default function ClientsPage() {
 
   const [domain, setDomain] = useState('');
 
+  // Edit Client dialog states
+  const [editingClient, setEditingClient] = useState<any | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editDomain, setEditDomain] = useState('');
+  const [editAdminEmail, setEditAdminEmail] = useState('');
+  const [editAdminUserId, setEditAdminUserId] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  // Password reset dialog states
+  const [resettingClient, setResettingClient] = useState<any | null>(null);
+  const [newResetPassword, setNewResetPassword] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
+
   useEffect(() => {
     if (!adminUserId.trim()) {
       setAdminUserIdAvailable(null);
@@ -72,16 +85,74 @@ export default function ClientsPage() {
          id: c.id,
          name: c.name,
          domain: c.domain,
-         isActive: true,
-         bookingCount: 0,
-         userCount: 0,
-         adminEmail: '',
-         createdAt: null
+         isActive: c.isActive === 1 || c.isActive === true || c.is_active === 1 || c.is_active === true,
+         bookingCount: c.bookingCount || 0,
+         userCount: c.userCount || 0,
+         adminEmail: c.adminEmail || '',
+         adminUserId: c.adminUserId || '',
+         createdAt: c.createdAt || null
       })));
     } catch (err: any) {
       toast.error('Failed to load clients: ' + err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openEditModal = (client: any) => {
+    setEditingClient(client);
+    setEditName(client.name || '');
+    setEditDomain(client.domain || '');
+    setEditAdminEmail(client.adminEmail || '');
+    setEditAdminUserId(client.adminUserId || '');
+  };
+
+  const handleUpdateClientSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingClient) return;
+    if (!editName || !editDomain || !editAdminEmail || !editAdminUserId) {
+      return toast.error('All fields are required.');
+    }
+    setIsUpdating(true);
+    try {
+      await api.put(`/settings/clients/${editingClient.id}`, {
+        name: editName,
+        domain: editDomain,
+        adminEmail: editAdminEmail,
+        adminUserId: editAdminUserId
+      });
+      toast.success('Tenant account updated successfully.');
+      setEditingClient(null);
+      loadClients();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || err.message || 'Failed to update tenant');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const openResetPasswordModal = (client: any) => {
+    setResettingClient(client);
+    setNewResetPassword('');
+  };
+
+  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resettingClient) return;
+    if (!newResetPassword.trim() || newResetPassword.length < 4) {
+      return toast.error('Password must be at least 4 characters long.');
+    }
+    setIsResetting(true);
+    try {
+      await api.post(`/settings/clients/${resettingClient.id}/reset-password`, {
+        newPassword: newResetPassword
+      });
+      toast.success(`Password for ${resettingClient.name} admin has been reset!`);
+      setResettingClient(null);
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || err.message || 'Failed to reset password');
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -369,20 +440,30 @@ export default function ClientsPage() {
                         </div>
                         <div className="flex items-center gap-3">
                            <Button 
-                              onClick={() => sendPasswordReset(client.adminEmail)}
+                              onClick={() => openEditModal(client)}
                               variant="outline"
                               className="flex-1 h-10 rounded-xl text-[10px] font-black uppercase tracking-widest gap-2 border-slate-200"
                            >
-                              <Mail className="w-4 h-4" />
+                              <Edit className="w-4 h-4 text-slate-500" />
+                              Edit Info
+                           </Button>
+                           <Button 
+                              onClick={() => openResetPasswordModal(client)}
+                              variant="outline"
+                              className="flex-1 h-10 rounded-xl text-[10px] font-black uppercase tracking-widest gap-2 border-slate-200 text-amber-600 hover:bg-amber-50"
+                           >
+                              <Key className="w-4 h-4" />
                               Reset Pass
                            </Button>
+                        </div>
+                        <div className="flex items-center gap-3">
                            <Button 
                               onClick={() => setClientToDelete(client.id)}
                               variant="outline"
-                              className="flex-1 h-10 rounded-xl text-[10px] font-black uppercase tracking-widest gap-2 border-slate-200 text-slate-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200"
+                              className="w-full h-10 rounded-xl text-[10px] font-black uppercase tracking-widest gap-2 border-slate-200 text-slate-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200"
                            >
                               <Trash2 className="w-4 h-4" />
-                              Delete
+                              Delete Tenant
                            </Button>
                         </div>
                      </div>
@@ -419,6 +500,129 @@ export default function ClientsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Edit Client Information Modal */}
+      {editingClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl space-y-6">
+            <div className="space-y-1">
+              <h3 className="font-black text-xl text-slate-900 dark:text-white uppercase tracking-tight">Edit Tenant Profile</h3>
+              <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Update domain, brand & admin identity</p>
+            </div>
+            
+            <form onSubmit={handleUpdateClientSubmit} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Tenant Name</label>
+                <Input 
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="rounded-xl h-11 border-2"
+                  placeholder="e.g. SKYWAY TRAVELS"
+                  required
+                />
+              </div>
+              
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Domain / URL Mapping</label>
+                <Input 
+                  value={editDomain}
+                  onChange={(e) => setEditDomain(e.target.value)}
+                  className="rounded-xl h-11 border-2"
+                  placeholder="e.g. portal.skyway.com"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Admin Login Email</label>
+                <Input 
+                  value={editAdminEmail}
+                  type="email"
+                  onChange={(e) => setEditAdminEmail(e.target.value)}
+                  className="rounded-xl h-11 border-2"
+                  placeholder="e.g. admin@skyway.com"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Admin User ID</label>
+                <Input 
+                  value={editAdminUserId}
+                  onChange={(e) => setEditAdminUserId(e.target.value)}
+                  className="rounded-xl h-11 border-2"
+                  placeholder="e.g. skywayadmin"
+                  required
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <Button 
+                  type="button" 
+                  onClick={() => setEditingClient(null)} 
+                  variant="outline" 
+                  className="flex-1 rounded-xl h-11 text-[10px] font-black uppercase tracking-widest border-2"
+                  disabled={isUpdating}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  type="submit" 
+                  className="flex-1 rounded-xl h-11 text-[10px] font-black uppercase tracking-widest bg-blue-600 hover:bg-blue-700 text-white"
+                  disabled={isUpdating}
+                >
+                  {isUpdating ? 'Saving...' : 'Save Changes'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Password Reset Modal */}
+      {resettingClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl space-y-6">
+            <div className="space-y-1">
+              <h3 className="font-black text-xl text-slate-900 dark:text-white uppercase tracking-tight">Reset Password</h3>
+              <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Provide temporary password for: {resettingClient.name}</p>
+            </div>
+            
+            <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">New Password</label>
+                <Input 
+                  type="password"
+                  value={newResetPassword}
+                  onChange={(e) => setNewResetPassword(e.target.value)}
+                  className="rounded-xl h-11 border-2"
+                  placeholder="Minimum 4 characters"
+                  required
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <Button 
+                  type="button" 
+                  onClick={() => setResettingClient(null)} 
+                  variant="outline" 
+                  className="flex-1 rounded-xl h-11 text-[10px] font-black uppercase tracking-widest border-2"
+                  disabled={isResetting}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  type="submit" 
+                  className="flex-1 rounded-xl h-11 text-[10px] font-black uppercase tracking-widest bg-red-600 hover:bg-red-700 text-white"
+                  disabled={isResetting}
+                >
+                  {isResetting ? 'Resetting...' : 'Change Password'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

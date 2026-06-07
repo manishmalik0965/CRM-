@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && node build-zip.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
@@ -14,7 +14,6 @@
   "dependencies": {
     "@base-ui/react": "^1.4.1",
     "@fontsource-variable/geist": "^5.2.8",
-    "@google/genai": "^1.52.0",
     "@tailwindcss/vite": "^4.1.14",
     "@types/canvas-confetti": "^1.9.0",
     "@types/dompurify": "^3.0.5",
@@ -58,7 +57,6 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
-    "@types/archiver": "^7.0.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.10",
@@ -66,9 +64,7 @@
     "@types/otplib": "^7.0.0",
     "@types/qrcode": "^1.5.6",
     "@types/uuid": "^10.0.0",
-    "archiver": "^8.0.0",
     "autoprefixer": "^10.4.21",
-    "bestzip": "^3.0.1",
     "playwright": "^1.60.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",

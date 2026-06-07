@@ -92,6 +92,9 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
   const [statusFilter, setStatusFilter] = useState('all');
   const [agentFilter, setAgentFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('all');
+  const [dateTypeFilter, setDateTypeFilter] = useState<'createdAt' | 'departureDate'>('createdAt');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ key: 'createdAt', direction: 'desc' });
@@ -293,24 +296,53 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
 
       // Date Filter
       if (dateFilter !== 'all') {
-        const now = new Date();
-        let created = null;
-        if (b.createdAt) {
-          if (typeof b.createdAt.toDate === 'function') created = b.createdAt.toDate();
-          else if (typeof b.createdAt.seconds === 'number') created = new Date(b.createdAt.seconds * 1000);
-          else created = new Date(b.createdAt);
-        }
-        
-        if (!created || isNaN(created.getTime())) return true; // Show if no date (fallback)
+        if (dateFilter === 'custom') {
+          let referenceDate = null;
+          if (dateTypeFilter === 'createdAt') {
+            if (b.createdAt) {
+              if (typeof b.createdAt.toDate === 'function') referenceDate = b.createdAt.toDate();
+              else if (typeof b.createdAt.seconds === 'number') referenceDate = new Date(b.createdAt.seconds * 1000);
+              else referenceDate = new Date(b.createdAt);
+            }
+          } else {
+            if (b.departureDate) {
+              referenceDate = new Date(b.departureDate);
+            }
+          }
 
-        const diff = now.getTime() - created.getTime();
-        const days = diff / (1000 * 60 * 60 * 24);
-        
-        if (dateFilter === 'today' && days > 1) return false;
-        if (dateFilter === 'week' && days > 7) return false;
-        if (dateFilter === 'month' && days > 30) return false;
-        if (dateFilter === 'quarter' && days > 90) return false;
-        if (dateFilter === 'year' && days > 365) return false;
+          if (!referenceDate || isNaN(referenceDate.getTime())) return false;
+
+          const dateMs = referenceDate.getTime();
+
+          if (customStartDate) {
+            const start = new Date(customStartDate + 'T00:00:00');
+            if (!isNaN(start.getTime()) && dateMs < start.getTime()) return false;
+          }
+
+          if (customEndDate) {
+            const end = new Date(customEndDate + 'T23:59:59');
+            if (!isNaN(end.getTime()) && dateMs > end.getTime()) return false;
+          }
+        } else {
+          const now = new Date();
+          let created = null;
+          if (b.createdAt) {
+            if (typeof b.createdAt.toDate === 'function') created = b.createdAt.toDate();
+            else if (typeof b.createdAt.seconds === 'number') created = new Date(b.createdAt.seconds * 1000);
+            else created = new Date(b.createdAt);
+          }
+          
+          if (!created || isNaN(created.getTime())) return true; // Show if no date (fallback)
+
+          const diff = now.getTime() - created.getTime();
+          const days = diff / (1000 * 60 * 60 * 24);
+          
+          if (dateFilter === 'today' && days > 1) return false;
+          if (dateFilter === 'week' && days > 7) return false;
+          if (dateFilter === 'month' && days > 30) return false;
+          if (dateFilter === 'quarter' && days > 90) return false;
+          if (dateFilter === 'year' && days > 365) return false;
+        }
       }
 
       // Search Term (CRM ID, Passenger, Email, Phone, Cardholder, Remarks)
@@ -390,7 +422,7 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
   // Reset to first page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, statusFilter, agentFilter, dateFilter, filter]);
+  }, [searchTerm, statusFilter, agentFilter, dateFilter, filter, dateTypeFilter, customStartDate, customEndDate]);
 
   const handleExportCSV = () => {
     if (filtered.length === 0) {
@@ -491,55 +523,133 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                       transition={{ duration: 0.3, ease: 'easeInOut' }}
                       className="overflow-hidden"
                     >
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-6 bg-slate-50/50 dark:bg-slate-800/20 rounded-3xl border border-slate-100 dark:border-slate-800 animate-in slide-in-from-top-4 duration-300">
-                        <div className="space-y-2">
-                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Lifecycle Status</label>
-                            <select 
-                              value={statusFilter} 
-                              onChange={(e) => setStatusFilter(e.target.value)}
-                              className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all"
-                            >
-                              <option value="all">Any Status</option>
-                          <option value="draft">Draft</option>
-                          <option value="pending">Pending</option>
-                          <option value="authorized">Authorized</option>
-                          <option value="email auth confirm">Email Auth Confirm</option>
-                          <option value="ready to charge">Ready to Charge</option>
-                          <option value="sent for charge">Sent for Charge</option>
-                          <option value="charged">Charged</option>
-                          <option value="chargeback">Chargeback</option>
-                          <option value="failed">Failed</option>
-                        </select>
-                    </div>
-                    <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Assigned Liaison</label>
-                        <select 
-                          value={agentFilter} 
-                          onChange={(e) => setAgentFilter(e.target.value)}
-                          className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all"
-                        >
-                          <option value="all">Global (All Agents)</option>
-                          {users.map(u => (
-                            <option key={u.id} value={u.id}>{u.displayName || u.email}</option>
-                          ))}
-                        </select>
-                    </div>
-                    <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Temporal Range</label>
-                        <select 
-                          value={dateFilter} 
-                          onChange={(e) => setDateFilter(e.target.value)}
-                          className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all"
-                        >
-                          <option value="all">All Time</option>
-                          <option value="today">Today (Past 24h)</option>
-                          <option value="week">Last 7 Days</option>
-                          <option value="month">Last 30 Days</option>
-                          <option value="quarter">Last 90 Days</option>
-                          <option value="year">Last 365 Days</option>
-                        </select>
-                    </div>
-                  </div>
+                      <div className="flex flex-col gap-6 p-6 bg-slate-50/50 dark:bg-slate-800/20 rounded-3xl border border-slate-100 dark:border-slate-800 animate-in slide-in-from-top-4 duration-300">
+                        {/* Selector Row */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          <div className="space-y-2">
+                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Lifecycle Status</label>
+                              <select 
+                                value={statusFilter} 
+                                onChange={(e) => setStatusFilter(e.target.value)}
+                                className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all"
+                              >
+                                <option value="all">Any Status</option>
+                                <option value="draft">Draft</option>
+                                <option value="pending">Pending</option>
+                                <option value="authorized">Authorized</option>
+                                <option value="email auth confirm">Email Auth Confirm</option>
+                                <option value="ready to charge">Ready to Charge</option>
+                                <option value="sent for charge">Sent for Charge</option>
+                                <option value="charged">Charged</option>
+                                <option value="chargeback">Chargeback</option>
+                                <option value="failed">Failed</option>
+                              </select>
+                          </div>
+                          <div className="space-y-2">
+                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Assigned Liaison</label>
+                              <select 
+                                value={agentFilter} 
+                                onChange={(e) => setAgentFilter(e.target.value)}
+                                className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all"
+                              >
+                                <option value="all">Global (All Agents)</option>
+                                {users.map(u => (
+                                  <option key={u.id} value={u.id}>{u.displayName || u.email}</option>
+                                ))}
+                              </select>
+                          </div>
+                          <div className="space-y-2">
+                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Temporal Range</label>
+                              <select 
+                                value={dateFilter} 
+                                onChange={(e) => setDateFilter(e.target.value)}
+                                className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all"
+                              >
+                                <option value="all">All Time</option>
+                                <option value="today">Today (Past 24h)</option>
+                                <option value="week">Last 7 Days</option>
+                                <option value="month">Last 30 Days</option>
+                                <option value="quarter">Last 90 Days</option>
+                                <option value="year">Last 365 Days</option>
+                                <option value="custom">Custom Date Range...</option>
+                              </select>
+                          </div>
+                        </div>
+
+                        {/* Interactive Range Picker Segment */}
+                        {dateFilter === 'custom' && (
+                          <motion.div 
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 p-5 rounded-2xl grid grid-cols-1 md:grid-cols-12 gap-5 items-end transition-all"
+                          >
+                            <div className="md:col-span-4 space-y-2">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Filter Reference Date</label>
+                                <div className="flex bg-slate-50 dark:bg-slate-950 p-1 rounded-xl border border-slate-100 dark:border-slate-850">
+                                   <button
+                                     type="button"
+                                     onClick={() => setDateTypeFilter('createdAt')}
+                                     className={cn(
+                                       "flex-1 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all cursor-pointer",
+                                       dateTypeFilter === 'createdAt' 
+                                         ? "bg-slate-900 text-white dark:bg-slate-800 shadow-sm" 
+                                         : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
+                                     )}
+                                   >
+                                     Creation Date
+                                   </button>
+                                   <button
+                                     type="button"
+                                     onClick={() => setDateTypeFilter('departureDate')}
+                                     className={cn(
+                                       "flex-1 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all cursor-pointer",
+                                       dateTypeFilter === 'departureDate' 
+                                         ? "bg-slate-900 text-white dark:bg-slate-800 shadow-sm" 
+                                         : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
+                                     )}
+                                   >
+                                     Travel Date
+                                   </button>
+                                </div>
+                            </div>
+
+                            <div className="md:col-span-3 space-y-2">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Start Date</label>
+                                <input 
+                                  type="date"
+                                  value={customStartDate}
+                                  onChange={(e) => setCustomStartDate(e.target.value)}
+                                  className="w-full h-11 bg-slate-50 dark:bg-slate-950 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all cursor-pointer"
+                                />
+                            </div>
+
+                            <div className="md:col-span-3 space-y-2">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">End Date</label>
+                                <input 
+                                  type="date"
+                                  value={customEndDate}
+                                  onChange={(e) => setCustomEndDate(e.target.value)}
+                                  className="w-full h-11 bg-slate-50 dark:bg-slate-950 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all cursor-pointer"
+                                />
+                            </div>
+
+                            <div className="md:col-span-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setCustomStartDate('');
+                                    setCustomEndDate('');
+                                    setDateTypeFilter('createdAt');
+                                  }}
+                                  className="w-full h-11 border-2 border-dashed border-red-200 dark:border-red-900/50 hover:bg-red-50 dark:hover:bg-red-950/20 text-red-500 dark:text-red-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
+                                >
+                                  Clear range
+                                </button>
+                            </div>
+                          </motion.div>
+                        )}
+                      </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -641,8 +751,41 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                         </span>
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <StatusBadge status={booking.status} />
+                  <TableCell className="py-4">
+                    <div className="flex flex-col gap-1.5 justify-center">
+                      <StatusBadge status={booking.status} />
+                      {(() => {
+                        const s = booking.status?.toLowerCase() || 'draft';
+                        const level = ['draft'].includes(s) ? 1 :
+                                      ['pending', 'email sent'].includes(s) ? 2 :
+                                      ['email auth confirm', 'authorized', 'ready to charge'].includes(s) ? 3 :
+                                      ['charged', 'chargeback'].includes(s) ? 4 : 1;
+                        const isDisputed = s === 'chargeback';
+                        return (
+                          <div className="flex items-center gap-1 w-20 pl-0.5">
+                            <span 
+                              className={cn("h-1 w-full rounded-full transition-all duration-300", level >= 1 ? "bg-blue-500/80" : "bg-slate-200 dark:bg-slate-800")} 
+                              title="Draft / Initiated" 
+                            />
+                            <span 
+                              className={cn("h-1 w-full rounded-full transition-all duration-300", level >= 2 ? "bg-amber-500/80" : "bg-slate-200 dark:bg-slate-800")} 
+                              title="Pending Verification" 
+                            />
+                            <span 
+                              className={cn("h-1 w-full rounded-full transition-all duration-300", level >= 3 ? "bg-emerald-500/80" : "bg-slate-200 dark:bg-slate-800")} 
+                              title="Authorized" 
+                            />
+                            <span 
+                              className={cn(
+                                "h-1 w-full rounded-full transition-all duration-300", 
+                                isDisputed ? "bg-red-500 animate-pulse" : level >= 4 ? "bg-teal-600" : "bg-slate-200 dark:bg-slate-800"
+                              )} 
+                              title={isDisputed ? "Chargeback" : "Charged"} 
+                            />
+                          </div>
+                        );
+                      })()}
+                    </div>
                   </TableCell>
                   <TableCell className="text-right px-10">
                     <div className="flex items-center justify-end gap-2">

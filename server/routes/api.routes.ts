@@ -668,10 +668,75 @@ router.get('/bookings/:id', async (req, res) => {
     }
 });
 
+// Dedicated Public Endpoint for Booking Authorization (No auth required)
+router.put('/public/bookings/:id/authorize', async (req, res) => {
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const id = req.params.id;
+        console.log('[PUT /public/bookings/:id/authorize] Client attempting to authorize booking ID:', id);
+        
+        const [existing]: any = await conn.execute('SELECT * FROM bookings WHERE id = ? FOR UPDATE', [id]);
+        if (existing.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ error: 'Booking not found' });
+        }
+
+        const existingRow = existing[0];
+        const { signatureData, remarks, authMetadata } = req.body;
+        
+        let existingDetails: any = {};
+        if (existingRow.details) {
+            try {
+                existingDetails = typeof existingRow.details === 'string' ? JSON.parse(existingRow.details) : existingRow.details;
+            } catch (e) {}
+        }
+        
+        const updatedDetails = {
+            ...existingDetails,
+            signatureData: signatureData || existingDetails.signatureData,
+            remarks: remarks || existingDetails.remarks,
+            authMetadata: authMetadata || existingDetails.authMetadata,
+            signature_data: signatureData || existingDetails.signature_data
+        };
+
+        await conn.execute(
+            'UPDATE bookings SET status = ?, details = ? WHERE id = ?',
+            [
+                'authorized',
+                JSON.stringify(updatedDetails),
+                id
+            ]
+        );
+        
+        await conn.commit();
+        console.log('[PUT /public/bookings/:id/authorize] Client authorized booking ID successfully:', id);
+        res.json({ success: true, id });
+    } catch (e: any) {
+        await conn.rollback();
+        console.error('[PUT /public/bookings/:id/authorize] Error:', e.message);
+        res.status(500).json({ error: e.message });
+    } finally {
+        conn.release();
+    }
+});
+
 
 router.get('/settings/clients', requireAuth, async (req, res) => {
     try {
-        const [rows] = await db.execute('SELECT * FROM companies');
+        const [rows] = await db.execute(`
+            SELECT 
+                c.id, 
+                c.name, 
+                c.domain, 
+                c.is_active AS isActive,
+                c.created_at AS createdAt,
+                (SELECT COUNT(*) FROM users u WHERE u.company_id = c.id) AS userCount,
+                (SELECT COUNT(*) FROM bookings b WHERE b.company_id = c.id) AS bookingCount,
+                (SELECT email FROM users u WHERE u.company_id = c.id AND u.role = 'Admin' LIMIT 1) AS adminEmail,
+                (SELECT user_id FROM users u WHERE u.company_id = c.id AND u.role = 'Admin' LIMIT 1) AS adminUserId
+            FROM companies c
+        `);
         res.json({ clients: rows });
     } catch (e: any) {
         res.status(500).json({ error: e.message });
@@ -803,10 +868,90 @@ router.delete('/bookings/:id', requireAuth, async (req, res) => {
 
 
 router.put('/settings/clients/:id', requireAuth, async (req, res) => {
+    const conn = await db.getConnection();
     try {
-        const { isActive } = req.body;
-        await db.execute('UPDATE companies SET is_active = ? WHERE id = ?', [isActive, req.params.id]);
+        await conn.beginTransaction();
+        const id = req.params.id;
+        const { name, domain, adminEmail, adminUserId, isActive } = req.body;
+
+        // 1. If company domain is changing, check uniqueness
+        if (domain) {
+            const [existingCompany]: any = await conn.execute('SELECT id FROM companies WHERE domain = ? AND id != ?', [domain, id]);
+            if (existingCompany.length > 0) {
+                throw new Error(`Domain '${domain}' is already registered with another tenant.`);
+            }
+        }
+
+        // 2. Update company
+        const fields = [];
+        const params = [];
+        if (name !== undefined) { fields.push('name = ?'); params.push(name); }
+        if (domain !== undefined) { fields.push('domain = ?'); params.push(domain); }
+        if (isActive !== undefined) { fields.push('is_active = ?'); params.push(isActive ? 1 : 0); }
+        
+        if (fields.length > 0) {
+            params.push(id);
+            await conn.execute(`UPDATE companies SET ${fields.join(', ')} WHERE id = ?`, params);
+        }
+
+        // 3. Update admin user details if email or userId is changing
+        const [adminUser]: any = await conn.execute('SELECT id FROM users WHERE company_id = ? AND role = "Admin" LIMIT 1', [id]);
+        if (adminUser.length > 0) {
+            const adminId = adminUser[0].id;
+            const uFields = [];
+            const uParams = [];
+            if (adminEmail !== undefined) { 
+                const [existingEmail]: any = await conn.execute('SELECT id FROM users WHERE email = ? AND id != ?', [adminEmail, adminId]);
+                if (existingEmail.length > 0) {
+                    throw new Error(`Admin email '${adminEmail}' is already registered.`);
+                }
+                uFields.push('email = ?'); 
+                uParams.push(adminEmail); 
+            }
+            if (adminUserId !== undefined) {
+                const [existingUId]: any = await conn.execute('SELECT id FROM users WHERE user_id = ? AND id != ?', [adminUserId, adminId]);
+                if (existingUId.length > 0) {
+                    throw new Error(`Admin User ID '${adminUserId}' is already registered.`);
+                }
+                uFields.push('user_id = ?'); 
+                uParams.push(adminUserId); 
+            }
+            if (uFields.length > 0) {
+                uParams.push(adminId);
+                await conn.execute(`UPDATE users SET ${uFields.join(', ')} WHERE id = ?`, uParams);
+            }
+        }
+
+        await conn.commit();
         res.json({ success: true });
+    } catch (e: any) {
+        await conn.rollback();
+        res.status(500).json({ error: e.message });
+    } finally {
+        conn.release();
+    }
+});
+
+// Dedicated endpoint to reset tenant Admin password from Super Admin portal
+router.post('/settings/clients/:id/reset-password', requireAuth, async (req, res) => {
+    try {
+        const id = req.params.id;
+        const { newPassword } = req.body;
+        if (!newPassword) {
+            return res.status(400).json({ error: 'New password is required' });
+        }
+
+        // Get the admin user for this company
+        const [adminUsers]: any = await db.execute('SELECT id FROM users WHERE company_id = ? AND role = "Admin" LIMIT 1', [id]);
+        if (adminUsers.length === 0) {
+            return res.status(404).json({ error: 'Admin user not found for this tenant.' });
+        }
+
+        const adminId = adminUsers[0].id;
+        const hash = await bcrypt.hash(newPassword, 10);
+        await db.execute('UPDATE users SET password_hash = ? WHERE id = ?', [hash, adminId]);
+
+        res.json({ success: true, message: 'Password has been reset successfully.' });
     } catch (e: any) {
         res.status(500).json({ error: e.message });
     }

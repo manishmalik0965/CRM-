@@ -142,7 +142,7 @@ export default function AuthorizationPage() {
       const newRemarkText = `[Authorization System] ${new Date().toLocaleString()}:\nBooking Authorized Successfully.\nVerification done by email: ${b.contactEmail || 'Unknown'}\nVerified auth shows the signature of pax generated.\nCustomer IP: ${ipAddress}`;
       const finalRemarks = b.remarks ? b.remarks + '\n\n' + newRemarkText : newRemarkText;
 
-      await api.put('/bookings/' + bookingIdToUse, {
+      await api.put('/public/bookings/' + bookingIdToUse + '/authorize', {
         status: 'authorized',
         signatureData: sigData,
         remarks: finalRemarks,

@@ -4,7 +4,6 @@ import path from "path";
 import fs from "fs";
 import nodemailer from "nodemailer";
 import { generateAuthEmail, generateConfirmationEmail } from "./src/lib/emailTemplates.ts";
-import { GoogleGenAI } from "@google/genai";
 import authRoutes from './server/routes/auth.routes';
 import apiRoutes from './server/routes/api.routes';
 import db from './server/database/connection';
@@ -56,6 +55,20 @@ function processAttachmentsAndRichText(attachmentsList: any[] | undefined, packa
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // Custom CORS details to support external client static site hosting
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Tenant-ID, X-Requested-With');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
+  });
 
   app.use(express.json({ limit: '50mb' }));
 
@@ -128,24 +141,175 @@ async function startServer() {
     }
   });
 
-  // Google Flights API mock for airports
+  // Lightweight in-memory database of major international airports to prevent Out-Of-Memory crashes on hosting
+  const MAJOR_AIRPORTS = [
+    // North America
+    { iata: "JFK", name: "John F. Kennedy Intl, New York, US" },
+    { iata: "LGA", name: "LaGuardia, New York, US" },
+    { iata: "EWR", name: "Newark Liberty Intl, New Jersey, US" },
+    { iata: "LAX", name: "Los Angeles Intl, California, US" },
+    { iata: "SFO", name: "San Francisco Intl, California, US" },
+    { iata: "ORD", name: "O'Hare Intl, Chicago, US" },
+    { iata: "MIA", name: "Miami Intl, Florida, US" },
+    { iata: "DFW", name: "Dallas/Fort Worth Intl, Texas, US" },
+    { iata: "ATL", name: "Hartsfield-Jackson Atlanta Intl, Georgia, US" },
+    { iata: "DEN", name: "Denver Intl, Colorado, US" },
+    { iata: "SEA", name: "Seattle-Tacoma Intl, Washington, US" },
+    { iata: "BOS", name: "Logan Intl, Boston, US" },
+    { iata: "LAS", name: "Harry Reid Intl, Las Vegas, US" },
+    { iata: "MCO", name: "Orlando Intl, Florida, US" },
+    { iata: "IAH", name: "George Bush Intercontinental, Houston, US" },
+    { iata: "PHX", name: "Phoenix Sky Harbor Intl, Arizona, US" },
+    { iata: "CLT", name: "Charlotte Douglas Intl, North Carolina, US" },
+    { iata: "MSP", name: "Minneapolis-Saint Paul Intl, Minnesota, US" },
+    { iata: "DTW", name: "Detroit Metropolitan, Michigan, US" },
+    { iata: "FLL", name: "Fort Lauderdale-Hollywood Intl, Florida, US" },
+    { iata: "SAN", name: "San Diego Intl, California, US" },
+    { iata: "TPA", name: "Tampa Intl, Florida, US" },
+    { iata: "YYZ", name: "Pearson Intl, Toronto, Canada" },
+    { iata: "YVR", name: "Vancouver Intl, British Columbia, Canada" },
+    { iata: "YUL", name: "Pierre Elliott Trudeau Intl, Montreal, Canada" },
+    { iata: "YYC", name: "Calgary Intl, Alberta, Canada" },
+    { iata: "MEX", name: "Benito Juarez Intl, Mexico City, Mexico" },
+    { iata: "CUN", name: "Cancun Intl, Quintana Roo, Mexico" },
+
+    // United Kingdom & Ireland
+    { iata: "LHR", name: "Heathrow, London, UK" },
+    { iata: "LGW", name: "Gatwick, London, UK" },
+    { iata: "STN", name: "Stansted, London, UK" },
+    { iata: "LTN", name: "Luton, London, UK" },
+    { iata: "MAN", name: "Manchester, UK" },
+    { iata: "EDI", name: "Edinburgh, Scotland, UK" },
+    { iata: "BHX", name: "Birmingham, UK" },
+    { iata: "GLA", name: "Glasgow, Scotland, UK" },
+    { iata: "DUB", name: "Dublin, Ireland" },
+    { iata: "SNN", name: "Shannon, Ireland" },
+
+    // Europe
+    { iata: "CDG", name: "Charles de Gaulle, Paris, France" },
+    { iata: "ORY", name: "Orly, Paris, France" },
+    { iata: "NCE", name: "Cote d'Azur, Nice, France" },
+    { iata: "AMS", name: "Schiphol, Amsterdam, Netherlands" },
+    { iata: "FRA", name: "Frankfurt, Germany" },
+    { iata: "MUC", name: "Munich, Germany" },
+    { iata: "BER", name: "Berlin Brandenburg, Germany" },
+    { iata: "DUS", name: "Dusseldorf, Germany" },
+    { iata: "HAM", name: "Hamburg, Germany" },
+    { iata: "FCO", name: "Leonardo da Vinci-Fiumicino, Rome, Italy" },
+    { iata: "MXP", name: "Malpensa, Milan, Italy" },
+    { iata: "VCE", name: "Marco Polo, Venice, Italy" },
+    { iata: "BCN", name: "El Prat, Barcelona, Spain" },
+    { iata: "MAD", name: "Adolfo Suarez Barajas, Madrid, Spain" },
+    { iata: "PMI", name: "Palma de Mallorca, Spain" },
+    { iata: "AGP", name: "Malaga, Spain" },
+    { iata: "ALC", name: "Alicante-Elche, Spain" },
+    { iata: "LIS", name: "Humberto Delgado, Lisbon, Portugal" },
+    { iata: "OPO", name: "Francisco Sa Carneiro, Porto, Portugal" },
+    { iata: "ZRH", name: "Zurich, Switzerland" },
+    { iata: "GVA", name: "Geneva, Switzerland" },
+    { iata: "BRU", name: "Brussels, Belgium" },
+    { iata: "VIE", name: "Vienna Intl, Austria" },
+    { iata: "CPH", name: "Copenhagen, Denmark" },
+    { iata: "ARN", name: "Arlanda, Stockholm, Sweden" },
+    { iata: "OSL", name: "Gardermoen, Oslo, Norway" },
+    { iata: "HEL", name: "Helsinki-Vantaa, Finland" },
+    { iata: "ATH", name: "Eleftherios Venizelos, Athens, Greece" },
+    { iata: "PRG", name: "Vaclav Havel, Prague, Czech Republic" },
+    { iata: "WAW", name: "Chopin, Warsaw, Poland" },
+    { iata: "BUD", name: "Liszt Ferenc Intl, Budapest, Hungary" },
+
+    // Middle East & Africa
+    { iata: "DXB", name: "Dubai Intl, United Arab Emirates" },
+    { iata: "DWC", name: "Al Maktoum Intl, Dubai, United Arab Emirates" },
+    { iata: "AUH", name: "Zayed Intl, Abu Dhabi, United Arab Emirates" },
+    { iata: "DOH", name: "Hamad Intl, Doha, Qatar" },
+    { iata: "IST", name: "Istanbul Airport, Istanbul, Turkey" },
+    { iata: "SAW", name: "Sabiha Gokcen Intl, Istanbul, Turkey" },
+    { iata: "ESB", name: "Esenboga, Ankara, Turkey" },
+    { iata: "RUH", name: "King Khalid Intl, Riyadh, Saudi Arabia" },
+    { iata: "JED", name: "King Abdulaziz Intl, Jeddah, Saudi Arabia" },
+    { iata: "DMM", name: "King Fahd Intl, Dammam, Saudi Arabia" },
+    { iata: "MCT", name: "Muscat Intl, Oman" },
+    { iata: "KWI", name: "Kuwait Intl, Kuwait" },
+    { iata: "BAH", name: "Bahrain Intl, Bahrain" },
+    { iata: "CAI", name: "Cairo Intl, Egypt" },
+    { iata: "HRG", name: "Hurghada Intl, Egypt" },
+    { iata: "SSH", name: "Sharm El Sheikh Intl, Egypt" },
+    { iata: "CMN", name: "Mohammed V Intl, Casablanca, Morocco" },
+    { iata: "RAK", name: "Menara, Marrakech, Morocco" },
+    { iata: "ADD", name: "Bole Intl, Addis Ababa, Ethiopia" },
+    { iata: "NBO", name: "Jomo Kenyatta Intl, Nairobi, Kenya" },
+    { iata: "CPT", name: "Cape Town Intl, South Africa" },
+    { iata: "JNB", name: "O.R. Tambo Intl, Johannesburg, South Africa" },
+    { iata: "MRU", name: "Sir Seewoosagur Ramgoolam Intl, Mauritius" },
+
+    // South Asia
+    { iata: "DEL", name: "Indira Gandhi Intl, Delhi, India" },
+    { iata: "BOM", name: "Chhatrapati Shivaji Maharaj Intl, Mumbai, India" },
+    { iata: "BLR", name: "Kempegowda Intl, Bengaluru, India" },
+    { iata: "MAA", name: "Chennai Intl, Chennai, India" },
+    { iata: "HYD", name: "Rajiv Gandhi Intl, Hyderabad, India" },
+    { iata: "CCU", name: "Netaji Subhash Chandra Bose Intl, Kolkata, India" },
+    { iata: "COK", name: "Cochin Intl, Kochi, India" },
+    { iata: "AMD", name: "Sardar Vallabhbhai Patel Intl, Ahmedabad, India" },
+    { iata: "GOI", name: "Dabolim, Goa, India" },
+    { iata: "DAC", name: "Hazrat Shahjalal Intl, Dhaka, Bangladesh" },
+    { iata: "CGP", name: "Shah Amanat Intl, Chittagong, Bangladesh" },
+    { iata: "KHI", name: "Jinnah Intl, Karachi, Pakistan" },
+    { iata: "LHE", name: "Allama Iqbal Intl, Lahore, Pakistan" },
+    { iata: "ISB", name: "Islamabad Intl, Pakistan" },
+    { iata: "CMB", name: "Bandaranaike Intl, Colombo, Sri Lanka" },
+    { iata: "KTM", name: "Tribhuvan Intl, Kathmandu, Nepal" },
+    { iata: "MLE", name: "Velana Intl, Male, Maldives" },
+
+    // East & Southeast Asia
+    { iata: "SIN", name: "Changi, Singapore" },
+    { iata: "BKK", name: "Suvarnabhumi, Bangkok, Thailand" },
+    { iata: "DMK", name: "Don Mueang Intl, Bangkok, Thailand" },
+    { iata: "HKT", name: "Phuket Intl, Thailand" },
+    { iata: "KUL", name: "Kuala Lumpur Intl, Malaysia" },
+    { iata: "CGK", name: "Soekarno-Hatta Intl, Jakarta, Indonesia" },
+    { iata: "DPS", name: "Ngurah Rai Intl, Bali, Indonesia" },
+    { iata: "MNL", name: "Ninoy Aquino Intl, Manila, Philippines" },
+    { iata: "SGN", name: "Tan Son Nhat Intl, Ho Chi Minh City, Vietnam" },
+    { iata: "HAN", name: "Noi Bai Intl, Hanoi, Vietnam" },
+    { iata: "HKG", name: "Hong Kong International Airport, HK" },
+    { iata: "TPE", name: "Taoyuan Intl, Taipei, Taiwan" },
+    { iata: "HND", name: "Haneda, Tokyo, Japan" },
+    { iata: "NRT", name: "Narita Intl, Tokyo, Japan" },
+    { iata: "KIX", name: "Kansai Intl, Osaka, Japan" },
+    { iata: "ICN", name: "Incheon Intl, Seoul, South Korea" },
+    { iata: "GMP", name: "Gimpo Intl, Seoul, South Korea" },
+    { iata: "PVG", name: "Pudong Intl, Shanghai, China" },
+    { iata: "SHA", name: "Hongqiao Intl, Shanghai, China" },
+    { iata: "PEK", name: "Beijing Capital, China" },
+    { iata: "PKX", name: "Daxing Intl, Beijing, China" },
+    { iata: "CAN", name: "Baiyun Intl, Guangzhou, China" },
+    { iata: "SZX", name: "Bao'an Intl, Shenzhen, China" },
+
+    // Oceania
+    { iata: "SYD", name: "Kingsford Smith, Sydney, Australia" },
+    { iata: "MEL", name: "Tullamarine, Melbourne, Australia" },
+    { iata: "BNE", name: "Brisbane Airport, Australia" },
+    { iata: "PER", name: "Perth Airport, Australia" },
+    { iata: "AKL", name: "Auckland Airport, New Zealand" },
+    { iata: "CHC", name: "Christchurch Intl, New Zealand" },
+    { iata: "NAN", name: "Nadi Intl, Fiji" }
+  ];
+
+  // Google Flights API mock for airports (Lightweight static in-memory provider)
   app.get("/api/flights/airports", (req, res) => {
     try {
       const q = (req.query.q as string)?.toLowerCase();
       if (!q) return res.json([]);
       
-      const airportsPath = path.join(process.cwd(), 'src/lib/airports.json');
-      const data = JSON.parse(fs.readFileSync(airportsPath, 'utf8'));
-      
-      const filtered = data.filter((a: any) => {
+      const filtered = MAJOR_AIRPORTS.filter((a: any) => {
         return (a.iata && a.iata.toLowerCase().includes(q)) || 
-               (a.name && a.name.toLowerCase().includes(q)) ||
-               (a.city && a.city.toLowerCase().includes(q));
+               (a.name && a.name.toLowerCase().includes(q));
       }).slice(0, 10);
       
-      // Return structured response typical of flight APIs
       res.json({
-        provider: "Google Flights API (Mock)",
+        provider: "Local Fast Air Travel DB (Lightweight)",
         results: filtered
       });
     } catch (err) {
@@ -225,25 +389,9 @@ const getAirlineDomainAsync = async (name: string) => {
     if (cleanName.includes(key)) return domain;
   }
   
-  if (process.env.GEMINI_API_KEY) {
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: `What is the primary official website domain (e.g. delta.com) for the travel company / airline "${name}"? Return ONLY the domain in plain text, nothing else.`,
-        config: {
-          tools: [{ googleSearch: {} }],
-        }
-      });
-      const guess = response.text?.trim().toLowerCase();
-      const domain = guess?.replace(/^https?:\/\//, '').split('/')[0] || '';
-      if (domain.includes('.')) return domain;
-    } catch(err) {
-      console.warn("Gemini logo search failed:", err);
-    }
-  }
-
-  return `${cleanName.split(' ')[0]}.com`;
+  // Return clean fallback domain for logo
+  const firstWord = cleanName.split(' ')[0].replace(/[^a-z0-9]/g, '');
+  return `${firstWord}.com`;
 };
 
   // CRM Email API with SMTP Support

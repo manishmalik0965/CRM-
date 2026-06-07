@@ -35,7 +35,7 @@ import {
   AlertDialogHeader, 
   AlertDialogTitle 
 } from '@/components/ui/alert-dialog';
-import { Plane, Trash2, Plus, UserPlus, Clipboard, CreditCard, DollarSign, Contact, ListChecks, Mail, FileText, ChevronRight, AlertCircle, Info, Calendar, Shield, Save, Lock, Search, Download } from 'lucide-react';
+import { Plane, Trash2, Plus, UserPlus, Clipboard, CreditCard, DollarSign, Contact, ListChecks, Mail, FileText, ChevronRight, AlertCircle, Info, Calendar, Shield, Save, Lock, Search, Download, Check, CheckCircle2, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { generateAuthEmail, generateCancelEmail, generateChangesEmail, generateRefundEmail } from '@/lib/emailTemplates';
@@ -721,7 +721,8 @@ export default function CreateBooking({ profile }: { profile: any }) {
       branding: settings,
       authLink: window.location.origin + '/authorize/' + (id || 'preview'),
       refundQuote: pricing.refundQuote || 0,
-      airlineCredits: pricing.airlineCredits || 0
+      airlineCredits: pricing.airlineCredits || 0,
+      isPreview: true
   };
 
   let previewHtml = '';
@@ -820,6 +821,93 @@ export default function CreateBooking({ profile }: { profile: any }) {
           )}
         </div>
       </div>
+
+      {/* Visual Reservation Stage Progress Stepper */}
+      {(() => {
+        const s = bookingStatus?.toLowerCase() || 'draft';
+        let curStep = 0;
+        if (['draft'].includes(s)) {
+          curStep = 0;
+        } else if (['pending', 'email sent'].includes(s)) {
+          curStep = 1;
+        } else if (['email auth confirm', 'authorized', 'ready to charge'].includes(s)) {
+          curStep = 2;
+        } else if (['charged', 'chargeback'].includes(s)) {
+          curStep = 3;
+        }
+
+        const stages = [
+          { label: 'Initiated', desc: 'Draft established', icon: FileText, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-950/45 border-blue-200 dark:border-blue-800' },
+          { label: 'Sent to Client', desc: 'Awaiting signature', icon: Clock, color: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-950/45 border-amber-200 dark:border-amber-800' },
+          { label: 'Authorized', desc: 'Verified core signature', icon: Shield, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-950/45 border-emerald-200 dark:border-emerald-800' },
+          { label: s === 'chargeback' ? 'Disputed' : 'Settle Completed', desc: s === 'chargeback' ? 'Payment Chargeback' : 'Verified funds charged', icon: s === 'chargeback' ? AlertCircle : CheckCircle2, color: s === 'chargeback' ? 'text-red-600 dark:text-red-400' : 'text-indigo-600 dark:text-indigo-400', bg: s === 'chargeback' ? 'bg-red-50 dark:bg-red-950/45 border-red-200 dark:border-red-800' : 'bg-indigo-50 dark:bg-indigo-950/45 border-indigo-200 dark:border-indigo-800' },
+        ];
+
+        return (
+          <div className="bg-slate-50/50 dark:bg-slate-800/10 border border-slate-200/60 dark:border-slate-800 rounded-3xl p-6 shadow-sm">
+            <div className="flex flex-col md:flex-row items-stretch justify-between gap-4 relative">
+              {stages.map((stage, i) => {
+                const Icon = stage.icon;
+                const isCompleted = i < curStep;
+                const isActive = i === curStep;
+
+                return (
+                  <React.Fragment key={i}>
+                    {/* Step Card / Element */}
+                    <div className="flex-1 flex items-center gap-4 p-3 rounded-2xl transition-all duration-300 relative z-10 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 shadow-xs">
+                      {/* Left: Indicator Icon */}
+                      <div className="relative shrink-0">
+                        <div className={cn(
+                          "w-10 h-10 rounded-xl flex items-center justify-center border-2 transition-all duration-500 shadow-xs",
+                          isCompleted ? "bg-emerald-500 border-emerald-500 text-white" :
+                          isActive ? cn(stage.bg, "border-2 animate-pulse scale-105") :
+                          "bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-800 text-slate-400"
+                        )}>
+                          {isCompleted ? (
+                            <Check className="w-4 h-4 text-white stroke-[3.5]" />
+                          ) : (
+                            <Icon className={cn("w-4 h-4", isActive ? stage.color : "text-slate-400 dark:text-slate-500")} />
+                          )}
+                        </div>
+                        {isActive && (
+                          <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Right: Titles */}
+                      <div className="flex flex-col text-left">
+                        <span className={cn(
+                          "text-[10px] font-black uppercase tracking-widest leading-none mb-1 transition-colors duration-300",
+                          isCompleted ? "text-emerald-600 dark:text-emerald-400" :
+                          isActive ? stage.color : "text-slate-400 dark:text-slate-600"
+                        )}>
+                          {stage.label}
+                        </span>
+                        <span className="text-[9px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider leading-none">
+                          {stage.desc}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Desktop Connector Line of Stepper */}
+                    {i < stages.length - 1 && (
+                      <div className="hidden md:block flex-1 max-w-[20px] lg:max-w-[40px] self-center h-0.5 relative rounded-full overflow-hidden bg-slate-200 dark:bg-slate-800">
+                        <div className={cn(
+                          "absolute top-0 left-0 h-full transition-all duration-700 bg-emerald-500",
+                          isCompleted ? "w-full" : "w-0"
+                        )} />
+                      </div>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 -mt-2">
         {/* Form Sections */}
