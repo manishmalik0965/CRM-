@@ -249,17 +249,48 @@ router.get('/bookings', async (req, res) => {
 
 router.get('/settings/public', async (req, res) => {
     try {
-        const [rows]: any = await db.query('SELECT settings_json FROM settings WHERE company_id = ?', ['legacy-tenant-1']);
+        let tenantId = (req.headers['x-tenant-id'] || req.query.tenantId) as string;
+        
+        if (!tenantId) {
+            let domain = req.query.domain as string;
+            if (!domain) {
+                const referer = req.headers.referer || '';
+                if (referer) {
+                    try {
+                        const parsedUrl = new URL(referer);
+                        domain = parsedUrl.hostname;
+                    } catch (err) {}
+                }
+            }
+            if (domain) {
+                const [compRows]: any = await db.query('SELECT id FROM companies WHERE domain = ?', [domain]);
+                if (compRows.length > 0) {
+                    tenantId = compRows[0].id;
+                }
+            }
+        }
+        
+        if (!tenantId) {
+            tenantId = 'legacy-tenant-1';
+        }
+
+        const [compRows]: any = await db.query('SELECT name FROM companies WHERE id = ?', [tenantId]);
+        let compName = 'BLACKGRASS CRM';
+        if (compRows.length > 0) {
+            compName = compRows[0].name;
+        }
+
+        const [rows]: any = await db.query('SELECT settings_json FROM settings WHERE company_id = ?', [tenantId]);
         if (rows.length > 0) {
             const settingsObj = typeof rows[0].settings_json === 'string' ? JSON.parse(rows[0].settings_json) : rows[0].settings_json;
             return res.json({
-                organizationName: settingsObj?.organizationName || 'BLACKGRASS CRM',
+                organizationName: settingsObj?.organizationName || compName,
                 primaryColor: settingsObj?.primaryColor || '#0f172a',
                 logoUrl: settingsObj?.logoUrl || '/logo.svg'
             });
         }
         res.json({
-            organizationName: 'BLACKGRASS CRM',
+            organizationName: compName,
             primaryColor: '#0f172a',
             logoUrl: '/logo.svg'
         });
@@ -271,12 +302,23 @@ router.get('/settings/public', async (req, res) => {
 router.get('/settings', async (req, res) => {
     try {
         const companyId = getCompanyId(req);
+        const [compRows]: any = await db.query('SELECT name FROM companies WHERE id = ?', [companyId]);
+        let compName = 'BLACKGRASS CRM';
+        if (compRows.length > 0) {
+            compName = compRows[0].name;
+        }
+        
+        const dynamicDefaults = {
+            ...DEFAULT_SETTINGS,
+            organizationName: compName
+        };
+
         const [rows]: any = await db.query('SELECT settings_json FROM settings WHERE company_id = ?', [companyId]);
         if (rows.length > 0) {
             const settingsObj = typeof rows[0].settings_json === 'string' ? JSON.parse(rows[0].settings_json) : rows[0].settings_json;
-            return res.json({ ...DEFAULT_SETTINGS, ...settingsObj });
+            return res.json({ ...dynamicDefaults, ...settingsObj });
         }
-        res.json(DEFAULT_SETTINGS);
+        res.json(dynamicDefaults);
     } catch (e: any) {
         res.status(500).json({ error: e.message });
     }
@@ -788,9 +830,14 @@ router.post('/settings/clients', requireAuth, async (req, res) => {
         );
 
         // 4.5 Initialize default settings in settings table for this tenant
+        const clientSettings = {
+            ...DEFAULT_SETTINGS,
+            organizationName: name,
+            supportEmail: adminEmail
+        };
         await conn.execute(
             'INSERT INTO settings (company_id, settings_json) VALUES (?, ?)',
-            [companyId, JSON.stringify(DEFAULT_SETTINGS)]
+            [companyId, JSON.stringify(clientSettings)]
         );
 
         // 5. Load current Super Admin/User's SMTP profile to dispatch the automated welcome invitation

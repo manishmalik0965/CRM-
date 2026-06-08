@@ -69,15 +69,22 @@ export default function AppWrapper() {
   useEffect(() => {
     async function determineTenant() {
       const hostname = window.location.hostname;
-      const isSystemDomain = hostname.includes('localhost') || hostname.includes('run.app') || hostname.includes('itconflict.xyz');
+      const isSystemDomain = hostname.includes('localhost') || 
+                             hostname.includes('127.0.0.1') || 
+                             hostname.includes('run.app') || 
+                             hostname.includes('itconflict.xyz') || 
+                             hostname.startsWith('ais-');
       
       const searchParams = new URLSearchParams(window.location.search);
       const urlTenant = searchParams.get('tenant');
+      const storedTenant = localStorage.getItem('tenantId');
+      
+      const tenantIdToLookup = urlTenant || storedTenant || null;
 
-      if (!isSystemDomain || urlTenant) {
+      if (!isSystemDomain || tenantIdToLookup) {
         try {
           const res = await api.get('/clients/tenant', { 
-            params: { domain: hostname, tenantId: urlTenant }
+            params: { domain: hostname, tenantId: tenantIdToLookup }
           });
           
           if (res.data) {
@@ -85,15 +92,40 @@ export default function AppWrapper() {
              setClientId(res.data.id);
              localStorage.setItem('tenantId', res.data.id);
              setIsSuspended(res.data.isActive === false);
+          } else if (storedTenant && storedTenant !== 'legacy-tenant-1') {
+             try {
+               const directRes = await api.get(`/clients/${storedTenant}`);
+               if (directRes.data) {
+                 setActiveClient(directRes.data);
+                 setClientId(directRes.data.id);
+                 setIsSuspended(directRes.data.isActive === false);
+                 setLoading(false);
+                 return;
+               }
+             } catch (err) {}
+             
+             setActiveClient({ id: 'legacy-tenant-1', name: 'Default Company', domain: hostname, isActive: true });
+             setClientId('legacy-tenant-1');
+             localStorage.setItem('tenantId', 'legacy-tenant-1');
           } else {
-             // Fallback to default instead of suspending
              setActiveClient({ id: 'legacy-tenant-1', name: 'Default Company', domain: hostname, isActive: true });
              setClientId('legacy-tenant-1');
              localStorage.setItem('tenantId', 'legacy-tenant-1');
           }
         } catch (e) {
           console.error("Failed to load tenant", e);
-          // Fallback to default on error so the app loads
+          if (storedTenant && storedTenant !== 'legacy-tenant-1') {
+             try {
+               const directRes = await api.get(`/clients/${storedTenant}`);
+               if (directRes.data) {
+                 setActiveClient(directRes.data);
+                 setClientId(directRes.data.id);
+                 setIsSuspended(directRes.data.isActive === false);
+                 setLoading(false);
+                 return;
+               }
+             } catch (err) {}
+          }
           setActiveClient({ id: 'legacy-tenant-1', name: 'Default Company', domain: hostname, isActive: true });
           setClientId('legacy-tenant-1');
           localStorage.setItem('tenantId', 'legacy-tenant-1');
