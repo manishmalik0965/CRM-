@@ -1851,8 +1851,27 @@ export default function CreateBooking({ profile }: { profile: any }) {
                                 }
                               }
                             }}
-                            className="min-h-[120px] bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-sm font-medium p-6 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-inner mb-6"
+                            className="min-h-[120px] bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-sm font-medium p-6 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-inner mb-4"
                           />
+
+                          <div className="flex justify-end mb-6">
+                            <Button 
+                              type="button"
+                              disabled={loading || !newRemark.trim()}
+                              onClick={(e) => { 
+                                e.preventDefault(); 
+                                saveRemarksOnly(); 
+                              }}
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-widest h-10 px-6 rounded-xl shadow-lg shadow-emerald-100 dark:shadow-none transition-all active:scale-95 flex items-center gap-2 disabled:opacity-50"
+                            >
+                              {loading ? (
+                                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              ) : (
+                                  <Save className="w-3.5 h-3.5" />
+                              )}
+                              {loading ? 'Saving...' : 'Save Remark'}
+                            </Button>
+                          </div>
                           
                           {remarks && (
                             <div className="space-y-4">
