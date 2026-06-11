@@ -817,7 +817,7 @@ const getAirlineDomainAsync = async (name: string) => {
   });
 
   app.post("/api/send-refund-email", async (req, res) => {
-    const { bookingId, appUrl, email, crmId, airlineName, totalAmount, refundQuote, airlineCredits, airlineCharges, serviceFee, currency, pnr, passengerName, branding, fromEmail, fromLabel, packageRichText, snapshotBase64, attachments: attachmentsList, cardLast4, cardHolderName } = req.body;
+    const { bookingId, appUrl, email, crmId, airlineName, totalAmount, refundQuote, airlineCredits, airlineCharges, serviceFee, currency, pnr, passengerName, branding, fromEmail, fromLabel, packageRichText, snapshotBase64, attachments: attachmentsList, cardLast4, cardHolderName, refundType } = req.body;
     
     if (!email || !fromEmail) {
       return res.status(400).json({ success: false, message: 'Missing recipient or sender email' });
@@ -847,7 +847,7 @@ const getAirlineDomainAsync = async (name: string) => {
       } catch(e) {}
     }
 
-    const html = generateRefundEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, totalAmount, airlineCharges, serviceFee, refundQuote, airlineCredits, currency, pnr, passengerName, cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || '', branding, authLink, packageRichText: processedRichText, snapshotUrl });
+    const html = generateRefundEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, totalAmount, airlineCharges, serviceFee, refundQuote, airlineCredits, currency, pnr, passengerName, cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || '', branding, authLink, packageRichText: processedRichText, snapshotUrl, refundType });
 
     const profile = branding?.smtpProfiles?.find((p: any) => p.email === fromEmail);
     if (!profile || !profile.appPassword) {

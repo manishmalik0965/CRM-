@@ -203,14 +203,14 @@ export default function UsersPage({ profile }: { profile: any }) {
               <Plus className="w-4 h-4 mr-2" />
               Add New User
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px] rounded-3xl p-8 border-slate-100 shadow-2xl">
+            <DialogContent className="sm:max-w-[425px] rounded-3xl p-8 border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xl">
               <DialogHeader>
-                <DialogTitle className="text-2xl font-black uppercase tracking-tighter">{editingId ? 'Edit User' : 'Create User'}</DialogTitle>
+                <DialogTitle className="text-2xl font-black uppercase tracking-tighter text-slate-900 dark:text-slate-100">{editingId ? 'Edit User' : 'Create User'}</DialogTitle>
               </DialogHeader>
               <div className="space-y-6 pt-4">
                 <div className="space-y-2">
                   <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Full Name</Label>
-                  <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="John Doe" className="rounded-xl bg-slate-50 border-slate-100" />
+                  <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="John Doe" className="rounded-xl bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-800 transition-all" />
                 </div>
                 <div className="space-y-4">
                   <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">User ID (Username)</Label>
@@ -219,7 +219,7 @@ export default function UsersPage({ profile }: { profile: any }) {
                       value={userId} 
                       onChange={(e) => setUserId(e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, ''))} 
                       placeholder="johndoe" 
-                      className="rounded-xl bg-slate-50 border-slate-100 pr-10 h-10" 
+                      className="rounded-xl bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-800 transition-all pr-10 h-10" 
                     />
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center">
                       {checkingUserId ? (
@@ -240,21 +240,26 @@ export default function UsersPage({ profile }: { profile: any }) {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email Address</Label>
-                  <Input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="john@example.com" className="rounded-xl bg-slate-50 border-slate-100" />
+                  <Input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="john@example.com" className="rounded-xl bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-800 transition-all" />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Role</Label>
-                  <select disabled={editingId !== null && email === 'manishmalik0965@gmail.com'} value={role} onChange={(e) => setRole(e.target.value)} className="w-full rounded-xl bg-slate-50 border border-slate-100 p-2.5 text-sm outline-none focus:border-blue-500 disabled:opacity-50">
-                    <option value="Agent">Agent</option>
-                    <option value="Manager">Manager</option>
-                    <option value="Admin">Admin</option>
-                    <option value="HOD">HOD</option>
-                    <option value="WFM">WFM</option>
+                  <select 
+                    disabled={editingId !== null && email === 'manishmalik0965@gmail.com'} 
+                    value={role} 
+                    onChange={(e) => setRole(e.target.value)} 
+                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-slate-100 p-2.5 text-sm outline-none focus:border-blue-500 disabled:opacity-50 cursor-pointer"
+                  >
+                    <option value="Agent" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">Agent</option>
+                    <option value="Manager" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">Manager</option>
+                    <option value="Admin" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">Admin</option>
+                    <option value="HOD" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">HOD</option>
+                    <option value="WFM" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">WFM</option>
                   </select>
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{editingId ? 'Reset Password (Optional)' : 'Password'}</Label>
-                  <Input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="••••••••" className="rounded-xl bg-slate-50 border-slate-100" />
+                  <Input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="••••••••" className="rounded-xl bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-800 transition-all" />
                 </div>
                 <Button disabled={checkingUserId || (!editingId && !userId.trim()) || userIdAvailable === false} onClick={handleSave} className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-6 rounded-t-none font-bold uppercase tracking-widest text-xs">
                   {editingId ? 'Update User' : 'Create User'}

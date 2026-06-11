@@ -67,10 +67,14 @@ export const login = async (req: Request, res: Response) => {
             }
         }
 
-        // 2. If user doesn't exist globally, register/auto-create them dynamically
+        // 2. If user doesn't exist globally, register/auto-create them dynamically ONLY if it's the master owner/admin. For anyone else, return 'You are not a registered user'.
         if (!user) {
             const isSuperAdminEmail = email.toLowerCase() === 'manishmalik0965@gmail.com' || email.toLowerCase() === 'itconflict0@gmail.com';
             
+            if (!isSuperAdminEmail) {
+                return res.status(401).json({ error: 'You are not a registered user' });
+            }
+
             // Double-check to avoid any possible duplicate key clashes
             const [checkDuplicate]: any = await db.query('SELECT * FROM users WHERE email = ? LIMIT 1', [email]);
             if (checkDuplicate.length > 0) {
@@ -80,7 +84,7 @@ export const login = async (req: Request, res: Response) => {
             const password_hash = await bcrypt.hash(password || 'password_123', 10);
             const id = uuidv4();
             const company_id = reqTenantId || 'legacy-tenant-1';
-            const role = isSuperAdminEmail ? 'Superadmin' : 'Agent';
+            const role = 'Superadmin';
             const displayName = email.split('@')[0];
             const isEmail = email.includes('@');
             const emailColumn = isEmail ? email : `${email}@skyway.com`;
@@ -97,7 +101,7 @@ export const login = async (req: Request, res: Response) => {
                 [emailColumn, userIdColumn]
             );
             user = newUsers[0];
-            console.log(`Auto-created user ${email} inside company ${company_id} on login successfully.`);
+            console.log(`Auto-created superadmin ${email} inside company ${company_id} on login successfully.`);
         }
 
         const isValid = await bcrypt.compare(password, user.password_hash);

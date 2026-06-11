@@ -133,7 +133,18 @@ export default function CreateBooking({ profile }: { profile: any }) {
     const newPricing = { ...pricing, [field]: value };
     const a = parseFloat(newPricing.airline as string) || 0;
     const s = parseFloat(newPricing.service as string) || 0;
-    newPricing.total = Number((a + s).toFixed(2));
+    
+    if (emailTemplateType === 'refund') {
+      const calculatedRefund = Number((a + s).toFixed(2));
+      if (field === 'refundQuote') {
+        newPricing.refundQuote = parseFloat(value) || 0;
+      } else {
+        newPricing.refundQuote = calculatedRefund;
+      }
+      newPricing.total = newPricing.refundQuote;
+    } else {
+      newPricing.total = Number((a + s).toFixed(2));
+    }
     setPricing(newPricing as any);
   };
 
@@ -200,7 +211,8 @@ export default function CreateBooking({ profile }: { profile: any }) {
   };
 
   const updatePassenger = (id: string, field: string, value: string) => {
-    setPassengers(passengers.map(p => p.id === id ? { ...p, [field]: value } : p));
+    const formattedValue = (field === 'name' || field === 'ticketNumber') ? value.toUpperCase() : value;
+    setPassengers(passengers.map(p => p.id === id ? { ...p, [field]: formattedValue } : p));
   };
 
   const [crmId, setCrmId] = useState('');
@@ -221,7 +233,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
   const [passengers, setPassengers] = useState<any[]>([{ id: 'init-1', name: '', dob: '', gender: 'Male', ptc: 'ADT', ticketNumber: '' }]);
   const [contact, setContact] = useState({ email: '', phone: '', address: '', city: '', state: '', zip: '', country: '' });
   const [payment, setPayment] = useState({ ccName: '', ccNumber: '', expiry: '', cvv: '' });
-  const [pricing, setPricing] = useState({ total: 0, airline: 0, service: 0, currency: 'USD', refundQuote: 0, airlineCredits: 0 });
+  const [pricing, setPricing] = useState({ total: 0, airline: 0, service: 0, currency: 'USD', refundQuote: 0, airlineCredits: 0, refundType: 'original' as 'original' | 'credit' });
   const [ancillaryServices, setAncillaryServices] = useState<any[]>([]);
   const [packageRichText, setPackageRichText] = useState('');
   const [validatedGateway, setValidatedGateway] = useState('');
@@ -336,7 +348,8 @@ export default function CreateBooking({ profile }: { profile: any }) {
             service: d.serviceFee || 0,
             currency: d.currency || 'USD',
             refundQuote: d.refundQuote || 0,
-            airlineCredits: d.airlineCredits || 0
+            airlineCredits: d.airlineCredits || 0,
+            refundType: d.refundType || 'original'
         });
         setAncillaryServices(d.ancillaryServices || []);
         setPackageRichText(d.packageRichText || '');
@@ -347,6 +360,29 @@ export default function CreateBooking({ profile }: { profile: any }) {
       }).catch(console.error).finally(() => setLoading(false));
     }
   }, [id]);
+
+  useEffect(() => {
+    const a = parseFloat(pricing.airline as any) || 0;
+    const s = parseFloat(pricing.service as any) || 0;
+    if (emailTemplateType === 'refund') {
+      const expectedRefund = Number((a + s).toFixed(2));
+      if (pricing.refundQuote !== expectedRefund || pricing.total !== expectedRefund) {
+        setPricing(prev => ({
+          ...prev,
+          refundQuote: expectedRefund,
+          total: expectedRefund
+        }));
+      }
+    } else {
+      const expectedTotal = Number((a + s).toFixed(2));
+      if (pricing.total !== expectedTotal) {
+        setPricing(prev => ({
+          ...prev,
+          total: expectedTotal
+        }));
+      }
+    }
+  }, [emailTemplateType, pricing.airline, pricing.service, pricing.refundQuote, pricing.total]);
 
   const handleCopyRawHtml = async () => {
     let snapshotBase64 = null;
@@ -388,7 +424,8 @@ export default function CreateBooking({ profile }: { profile: any }) {
       branding: settings,
       authLink: window.location.origin + '/authorize/' + (id || 'preview'),
       refundQuote: pricing.refundQuote || 0,
-      airlineCredits: pricing.airlineCredits || 0
+      airlineCredits: pricing.airlineCredits || 0,
+      refundType: pricing.refundType || 'original'
     };
     
     let html = '';
@@ -510,6 +547,8 @@ export default function CreateBooking({ profile }: { profile: any }) {
         bookingData.totalAmount = pricing.total;
         bookingData.currency = pricing.currency;
         bookingData.refundQuote = pricing.refundQuote || 0;
+        bookingData.airlineCredits = pricing.airlineCredits || 0;
+        bookingData.refundType = pricing.refundType || 'original';
         bookingData.packageRichText = packageRichText;
         bookingData.oldPackageRichText = existingSnap?.data?.packageRichText || '';
         bookingData.validatedGateway = validatedGateway;
@@ -559,35 +598,46 @@ export default function CreateBooking({ profile }: { profile: any }) {
       const finalRemarks = newRemark ? (remarks ? remarks + '\n\n' : '') + `[${profile?.username || profile?.email || 'System'}] ${new Date().toLocaleString()}:\n${newRemark}` : remarks;
 
       const dataToSave: any = {
-        airlineName, status: finalStatus, remarks: finalRemarks, pnr, oldPnr, modificationDetails,
-        origin: originSearch.trim() ? originSearch.toUpperCase() : origin,
-        destination: destSearch.trim() ? destSearch.toUpperCase() : destination,
+        airlineName: (airlineName || '').toUpperCase(), status: finalStatus, remarks: finalRemarks, pnr: (pnr || '').toUpperCase(), oldPnr: (oldPnr || '').toUpperCase(), modificationDetails: (modificationDetails || '').toUpperCase(),
+        origin: (originSearch.trim() ? originSearch.toUpperCase() : origin || '').toUpperCase(),
+        destination: (destSearch.trim() ? destSearch.toUpperCase() : destination || '').toUpperCase(),
         cabinClass, tripType, departureDate, arrivalDate,
-        multiCitySegments: tripType === 'Multi-City' ? multiCitySegments : [],
+        multiCitySegments: tripType === 'Multi-City' ? multiCitySegments.map((s: any) => ({
+          ...s,
+          origin: (s.origin || '').toUpperCase(),
+          destination: (s.destination || '').toUpperCase()
+        })) : [],
         emailTemplateType, ancillaryServices, packageRichText,
         oldPackageRichText: existingSnap?.data?.packageRichText || '',
-        validatedGateway, agentId: profile?.id, agentEmail: profile?.email || profile?.email, agentName: profile?.displayName || profile?.username || 'Unknown',
+        validatedGateway: (validatedGateway || '').toUpperCase(), agentId: profile?.id, agentEmail: profile?.email || profile?.email, agentName: profile?.displayName || profile?.username || 'Unknown',
         airlineDomain,
       };
 
       if (canEditSensitive) {
         dataToSave.contactEmail = contact.email;
         dataToSave.contactPhone = contact.phone;
-        dataToSave.address = contact.address;
-        dataToSave.city = contact.city;
-        dataToSave.state = contact.state;
-        dataToSave.zip = contact.zip;
-        dataToSave.country = contact.country;
+        dataToSave.address = (contact.address || '').toUpperCase();
+        dataToSave.city = (contact.city || '').toUpperCase();
+        dataToSave.state = (contact.state || '').toUpperCase();
+        dataToSave.zip = (contact.zip || '').toUpperCase();
+        dataToSave.country = (contact.country || '').toUpperCase();
         dataToSave.airlineCharges = pricing.airline;
         dataToSave.serviceFee = pricing.service;
         dataToSave.totalAmount = pricing.total;
         dataToSave.currency = pricing.currency;
-        dataToSave.passengerNames = passengers.map((p: any) => { try { return typeof p === 'string' ? p : p.name; } catch(e) { return ''; }});
-        dataToSave.passengerDetails = passengers;
+        dataToSave.refundQuote = pricing.refundQuote || 0;
+        dataToSave.airlineCredits = pricing.airlineCredits || 0;
+        dataToSave.refundType = pricing.refundType || 'original';
+        dataToSave.passengerNames = passengers.map((p: any) => { try { return (typeof p === 'string' ? p : p.name || '').toUpperCase(); } catch(e) { return ''; }});
+        dataToSave.passengerDetails = passengers.map((p: any) => ({
+          ...p,
+          name: (p.name || '').toUpperCase(),
+          ticketNumber: (p.ticketNumber || '').toUpperCase()
+        }));
       }
 
       if (canEditSensitive || addingNewCard) {
-        dataToSave.cardHolder = payment.ccName;
+        dataToSave.cardHolder = (payment.ccName || '').toUpperCase();
         dataToSave.cardNumber = payment.ccNumber;
         dataToSave.cardNumberMasked = payment.ccNumber ? payment.ccNumber.slice(-4) : '';
         dataToSave.expiry = payment.expiry;
@@ -699,11 +749,28 @@ export default function CreateBooking({ profile }: { profile: any }) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            bookingId: createdBookingId, crmId: crmId, email: contact.email, airlineName: airlineName, airlineDomain,
-            passengerName: payment.ccName || passengers[0]?.name || 'Passenger',
+            bookingId: createdBookingId, crmId: crmId, email: contact.email, airlineName: (airlineName || '').toUpperCase(), airlineDomain,
+            passengerName: (payment.ccName || passengers[0]?.name || 'Passenger').toUpperCase(),
             totalAmount: pricing.total, currency: pricing.currency, airlineCharges: pricing.airline, serviceFee: pricing.service, refundQuote: pricing.refundQuote || 0, airlineCredits: pricing.airlineCredits || 0,
-            origin, destination, tripType, departureDate, arrivalDate, multiCitySegments: tripType === 'Multi-City' ? multiCitySegments : [], cabinClass, pnr, oldPnr, modificationDetails, passengers, contact, validatedGateway,
-            cardHolderName: payment.ccName || passengers[0]?.name || 'Valued Customer', cardLast4: payment.ccNumber ? payment.ccNumber.slice(-4) : '', packageRichText, appUrl: window.location.origin, fromEmail: smtpProfile?.email, fromLabel: smtpProfile?.label, branding: settings, snapshotBase64, snapshotUrl,
+            refundType: pricing.refundType || 'original',
+            origin: (origin || '').toUpperCase(), destination: (destination || '').toUpperCase(), tripType, departureDate, arrivalDate, 
+            multiCitySegments: (tripType === 'Multi-City' ? multiCitySegments : []).map((seg: any) => ({
+              ...seg,
+              origin: (seg.origin || '').toUpperCase(),
+              destination: (seg.destination || '').toUpperCase()
+            })), 
+            cabinClass, pnr: (pnr || '').toUpperCase(), oldPnr: (oldPnr || '').toUpperCase(), modificationDetails: (modificationDetails || '').toUpperCase(), 
+            passengers: passengers.map((p: any) => ({ ...p, name: (p.name || '').toUpperCase(), ticketNumber: (p.ticketNumber || '').toUpperCase() })), 
+            contact: {
+              ...contact,
+              address: (contact.address || '').toUpperCase(),
+              city: (contact.city || '').toUpperCase(),
+              state: (contact.state || '').toUpperCase(),
+              zip: (contact.zip || '').toUpperCase(),
+              country: (contact.country || '').toUpperCase()
+            }, 
+            validatedGateway: (validatedGateway || '').toUpperCase(),
+            cardHolderName: (payment.ccName || passengers[0]?.name || 'Valued Customer').toUpperCase(), cardLast4: payment.ccNumber ? payment.ccNumber.slice(-4) : '', packageRichText, appUrl: window.location.origin, fromEmail: smtpProfile?.email, fromLabel: smtpProfile?.label, branding: settings, snapshotBase64, snapshotUrl,
             oldPackageRichText: '', attachments: []
           })
         });
@@ -722,26 +789,33 @@ export default function CreateBooking({ profile }: { profile: any }) {
   const previewHtmlData = {
       bookingId: id || 'Preview',
       crmId: crmId || 'SW-PREVIEW',
-      pnr: pnr || '[PNR]',
-      oldPnr,
-      modificationDetails,
-      airlineName: airlineName || 'Airline Name',
+      pnr: (pnr || '[PNR]').toUpperCase(),
+      oldPnr: (oldPnr || '').toUpperCase(),
+      modificationDetails: (modificationDetails || '').toUpperCase(),
+      airlineName: (airlineName || 'Airline Name').toUpperCase(),
       airlineDomain: airlineDomain,
-      passengerName: passengers[0]?.name || 'Passenger',
+      passengerName: (passengers[0]?.name || 'Passenger').toUpperCase(),
       totalAmount: pricing.total || 0,
       airlineCharges: pricing.airline || 0,
       serviceFee: pricing.service || 0,
       currency: pricing.currency || 'USD',
-      origin: origin || 'ORI',
-      destination: destination || 'DES',
+      origin: (origin || 'ORI').toUpperCase(),
+      destination: (destination || 'DES').toUpperCase(),
       tripType,
       departureDate,
       arrivalDate,
       cabinClass: cabinClass || 'Economy',
-      passengers,
-      contact,
-      validatedGateway,
-      cardHolderName: payment.ccName || passengers[0]?.name || 'Valued Customer',
+      passengers: passengers.map((p: any) => ({ ...p, name: (p.name || '').toUpperCase(), ticketNumber: (p.ticketNumber || '').toUpperCase() })),
+      contact: {
+        ...contact,
+        address: (contact.address || '').toUpperCase(),
+        city: (contact.city || '').toUpperCase(),
+        state: (contact.state || '').toUpperCase(),
+        zip: (contact.zip || '').toUpperCase(),
+        country: (contact.country || '').toUpperCase()
+      },
+      validatedGateway: (validatedGateway || '').toUpperCase(),
+      cardHolderName: (payment.ccName || passengers[0]?.name || 'Valued Customer').toUpperCase(),
       cardLast4: payment.ccNumber ? payment.ccNumber.slice(-4) : '',
       packageRichText: isHtmlMode ? sanitizeHtml(packageRichText) : packageRichText,
       snapshotUrl: undefined,
@@ -749,6 +823,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
       authLink: window.location.origin + '/authorize/' + (id || 'preview'),
       refundQuote: pricing.refundQuote || 0,
       airlineCredits: pricing.airlineCredits || 0,
+      refundType: pricing.refundType || 'original',
       isPreview: true
   };
 
@@ -1150,10 +1225,10 @@ export default function CreateBooking({ profile }: { profile: any }) {
                       type="text" 
                       placeholder="123 Travel Lane" 
                       value={contact.address} 
-                      onChange={(e) => setContact({...contact, address: e.target.value})}
+                      onChange={(e) => setContact({...contact, address: e.target.value.toUpperCase()})}
                       readOnly={!!id}
                       className={cn(
-                        "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 focus:border-blue-500 outline-none transition-all",
+                        "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 focus:border-blue-500 outline-none transition-all uppercase font-medium",
                         id && "bg-slate-50 dark:bg-slate-800/50 text-slate-400 cursor-not-allowed"
                       )}
                     />
@@ -1164,10 +1239,10 @@ export default function CreateBooking({ profile }: { profile: any }) {
                        <input 
                         type="text" 
                         value={contact.city} 
-                        onChange={(e) => setContact({...contact, city: e.target.value})}
+                        onChange={(e) => setContact({...contact, city: e.target.value.toUpperCase()})}
                         readOnly={!!id}
                         className={cn(
-                          "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-blue-500 transition-all font-medium",
+                          "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-blue-500 transition-all font-bold uppercase",
                           id && "bg-slate-50 dark:bg-slate-800/50 text-slate-400 cursor-not-allowed"
                         )}
                       />
@@ -1177,10 +1252,10 @@ export default function CreateBooking({ profile }: { profile: any }) {
                       <input 
                         type="text" 
                         value={contact.state} 
-                        onChange={(e) => setContact({...contact, state: e.target.value})}
+                        onChange={(e) => setContact({...contact, state: e.target.value.toUpperCase()})}
                         readOnly={!!id}
                         className={cn(
-                          "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-blue-500 transition-all font-medium",
+                          "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-blue-500 transition-all font-bold uppercase",
                           id && "bg-slate-50 dark:bg-slate-800/50 text-slate-400 cursor-not-allowed"
                         )}
                       />
@@ -1190,10 +1265,10 @@ export default function CreateBooking({ profile }: { profile: any }) {
                       <input 
                         type="text" 
                         value={contact.zip} 
-                        onChange={(e) => setContact({...contact, zip: e.target.value})}
+                        onChange={(e) => setContact({...contact, zip: e.target.value.toUpperCase()})}
                         readOnly={!!id}
                         className={cn(
-                          "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-blue-500 transition-all font-medium",
+                          "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-blue-500 transition-all font-bold uppercase",
                           id && "bg-slate-50 dark:bg-slate-800/50 text-slate-400 cursor-not-allowed"
                         )}
                       />
@@ -1455,7 +1530,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
                             type="text" 
                             placeholder="ABCDEF"
                             value={pnr}
-                            onChange={(e) => setPnr(e.target.value)}
+                            onChange={(e) => setPnr(e.target.value.toUpperCase())}
                             className="w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 focus:border-blue-500 outline-none transition-all uppercase font-bold"
                           />
                       </div>
@@ -1469,7 +1544,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
                               type="text" 
                               placeholder="XYZ123"
                               value={oldPnr}
-                              onChange={(e) => setOldPnr(e.target.value)}
+                              onChange={(e) => setOldPnr(e.target.value.toUpperCase())}
                               className="w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 focus:border-blue-500 outline-none transition-all uppercase font-bold"
                             />
                         </div>
@@ -1479,8 +1554,8 @@ export default function CreateBooking({ profile }: { profile: any }) {
                               type="text" 
                               placeholder="Upgraded to Economy Plus / Change of Date"
                               value={modificationDetails}
-                              onChange={(e) => setModificationDetails(e.target.value)}
-                              className="w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 focus:border-blue-500 outline-none transition-all font-medium"
+                              onChange={(e) => setModificationDetails(e.target.value.toUpperCase())}
+                              className="w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 focus:border-blue-500 outline-none transition-all font-bold uppercase"
                             />
                         </div>
                       </div>
@@ -1584,11 +1659,11 @@ export default function CreateBooking({ profile }: { profile: any }) {
                       )}
                       <input 
                         type="text" 
-                        placeholder="Delta Airlines" 
+                        placeholder="DELTA AIRLINES" 
                         value={airlineName} 
-                        onChange={(e) => { setAirlineName(e.target.value); setLogoError(false); }}
+                        onChange={(e) => { setAirlineName(e.target.value.toUpperCase()); setLogoError(false); }}
                         className={cn(
-                          "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg py-2.5 text-sm focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 focus:border-blue-500 outline-none transition-all font-bold tracking-tight",
+                          "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg py-2.5 text-sm focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 focus:border-blue-500 outline-none transition-all font-bold tracking-tight uppercase",
                           airlineDomain && !logoError ? "pl-11" : "px-4"
                         )}
                       />
@@ -1655,18 +1730,46 @@ export default function CreateBooking({ profile }: { profile: any }) {
                         </div>
                       </div>
                       {emailTemplateType === 'refund' && (
-                      <div>
-                        <label className="text-[10px] font-bold text-emerald-500 dark:text-emerald-400 uppercase tracking-wider mb-1.5 block">Total Refund Quote</label>
-                        <div className="relative">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-500 text-xs font-black">{pricing.currency}</span>
-                          <input 
-                            type="number" 
-                            value={pricing.refundQuote || ''} 
-                            onChange={(e) => handlePriceChange('refundQuote', e.target.value)}
-                            className="w-full border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/50 dark:bg-emerald-900/20 text-slate-900 dark:text-slate-100 rounded-lg pl-10 pr-4 py-2.5 text-sm outline-none font-bold focus:border-emerald-500 transition-all shadow-sm"
-                          />
-                        </div>
-                      </div>
+                        <>
+                          <div className="md:col-span-2">
+                            <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 block">Refund Type</label>
+                            <select
+                              value={pricing.refundType || 'original'}
+                              onChange={(e) => setPricing({ ...pricing, refundType: e.target.value as 'original' | 'credit' })}
+                              className="w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg px-4 py-2.5 text-sm outline-none font-bold focus:border-blue-500 transition-all shadow-sm"
+                            >
+                              <option value="original">Refund To Original Payment Method</option>
+                              <option value="credit">Airline Credit</option>
+                            </select>
+                          </div>
+                          {pricing.refundType !== 'credit' ? (
+                            <div>
+                              <label className="text-[10px] font-bold text-emerald-500 dark:text-emerald-400 uppercase tracking-wider mb-1.5 block">Total Refund Quote</label>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-500 text-xs font-black">{pricing.currency}</span>
+                                <input 
+                                  type="number" 
+                                  value={pricing.refundQuote || ''} 
+                                  onChange={(e) => handlePriceChange('refundQuote', e.target.value)}
+                                  className="w-full border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/50 dark:bg-emerald-900/20 text-slate-900 dark:text-slate-100 rounded-lg pl-10 pr-4 py-2.5 text-sm outline-none font-bold focus:border-emerald-500 transition-all shadow-sm"
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <label className="text-[10px] font-bold text-emerald-500 dark:text-emerald-400 uppercase tracking-wider mb-1.5 block">Airline Credits</label>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-500 text-xs font-black">PTS</span>
+                                <input 
+                                  type="number" 
+                                  value={pricing.airlineCredits || ''} 
+                                  onChange={(e) => handlePriceChange('airlineCredits', e.target.value)}
+                                  className="w-full border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/50 dark:bg-emerald-900/20 text-slate-900 dark:text-slate-100 rounded-lg pl-10 pr-4 py-2.5 text-sm outline-none font-bold focus:border-emerald-500 transition-all shadow-sm"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
 
@@ -1692,7 +1795,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
                               type="text" 
                               placeholder="AMEX CONNECT / STRIPE"
                               value={validatedGateway}
-                              onChange={(e) => setValidatedGateway(e.target.value)}
+                              onChange={(e) => setValidatedGateway(e.target.value.toUpperCase())}
                               className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-xs font-black text-blue-400 outline-none focus:ring-1 focus:ring-blue-500/50 uppercase tracking-widest"
                             />
                           </div>

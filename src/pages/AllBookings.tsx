@@ -89,12 +89,15 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
   const [bookings, setBookings] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState(searchParams.get('q') || '');
+  const [searchTarget, setSearchTarget] = useState<'all' | 'paxName' | 'cchName' | 'ccLast4' | 'phone' | 'email' | 'crmId' | 'pnr'>('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [agentFilter, setAgentFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('all');
   const [dateTypeFilter, setDateTypeFilter] = useState<'createdAt' | 'departureDate'>('createdAt');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
+  const [airlineFilter, setAirlineFilter] = useState('all');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ key: 'createdAt', direction: 'desc' });
@@ -294,6 +297,23 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
       // Agent Filter
       if (agentFilter !== 'all' && b.agentId !== agentFilter) return false;
 
+      // Airline Filter
+      if (airlineFilter !== 'all' && b.airlineName?.toUpperCase() !== airlineFilter.toUpperCase()) return false;
+
+      // Payment Status Filter
+      if (paymentStatusFilter !== 'all') {
+        const s = b.status?.toLowerCase() || '';
+        if (paymentStatusFilter === 'authorized') {
+          if (!['authorized', 'email auth confirm', 'ready to charge', 'sent for charge'].includes(s)) return false;
+        } else if (paymentStatusFilter === 'charged') {
+          if (s !== 'charged') return false;
+        } else if (paymentStatusFilter === 'chargeback') {
+          if (s !== 'chargeback') return false;
+        } else if (paymentStatusFilter === 'unpaid') {
+          if (['authorized', 'email auth confirm', 'ready to charge', 'sent for charge', 'charged', 'chargeback'].includes(s)) return false;
+        }
+      }
+
       // Date Filter
       if (dateFilter !== 'all') {
         if (dateFilter === 'custom') {
@@ -345,26 +365,81 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
         }
       }
 
-      // Search Term (CRM ID, Passenger, Email, Phone, Cardholder, Remarks)
-      const term = searchTerm.toLowerCase();
+      // Search Term (CRM ID, Passenger Details, Email, Phone, Cardholder Name, Credit Card Numbers, Routes, etc.)
+      const term = searchTerm.toLowerCase().trim();
       if (!term) return true;
 
-      return (
-        b.crmId?.toLowerCase().includes(term) ||
-        b.pnr?.toLowerCase().includes(term) ||
-        b.oldPnr?.toLowerCase().includes(term) ||
-        b.airlineName?.toLowerCase().includes(term) ||
-        b.contactEmail?.toLowerCase().includes(term) ||
-        String(b.contactPhone || '').toLowerCase().includes(term) ||
-        b.cardHolder?.toLowerCase().includes(term) ||
-        b.ccName?.toLowerCase().includes(term) ||
-        b.cardHolderName?.toLowerCase().includes(term) ||
-        b.remarks?.toLowerCase().includes(term) ||
-        b.passengerNames?.some((p: any) => {
+      // Pax validation (checks array of string passengerNames and array of passengers object details)
+      const matchesPaxName = 
+        (b.passengerNames && Array.isArray(b.passengerNames) && b.passengerNames.some((p: any) => {
           const pName = typeof p === 'string' ? p : (p?.name || '');
           return pName.toLowerCase().includes(term);
-        })
-      );
+        })) || 
+        (b.passengerDetails && Array.isArray(b.passengerDetails) && b.passengerDetails.some((p: any) => {
+          return (p?.name || '').toLowerCase().includes(term) || 
+                 (p?.ticketNumber || '').toLowerCase().includes(term) ||
+                 (p?.passport || '').toLowerCase().includes(term);
+        }));
+
+      // Card Holder validation
+      const matchesCchName = 
+        (b.cardHolder || '').toLowerCase().includes(term) ||
+        (b.ccName || '').toLowerCase().includes(term) ||
+        (b.cardHolderName || '').toLowerCase().includes(term);
+
+      // Card Number and Last 4 details
+      const matchesCcLast4 = 
+        (b.cardNumberMasked || '').toLowerCase().includes(term) ||
+        (b.cardNumber || '').toLowerCase().includes(term) ||
+        (b.card_last4 || '').toLowerCase().includes(term);
+
+      // Routing ports details (including segments)
+      const matchesRoute = 
+        (b.origin || '').toLowerCase().includes(term) ||
+        (b.destination || '').toLowerCase().includes(term) ||
+        (b.multiCitySegments && Array.isArray(b.multiCitySegments) && b.multiCitySegments.some((seg: any) => 
+          (seg?.origin || '').toLowerCase().includes(term) || 
+          (seg?.destination || '').toLowerCase().includes(term)
+        ));
+
+      // Gateway validation
+      const matchesGateway = (b.validatedGateway || '').toLowerCase().includes(term);
+
+      switch (searchTarget) {
+        case 'paxName':
+          return matchesPaxName;
+        case 'cchName':
+          return matchesCchName;
+        case 'ccLast4':
+          return matchesCcLast4;
+        case 'phone':
+          return String(b.contactPhone || '').toLowerCase().includes(term);
+        case 'email':
+          return (b.contactEmail || '').toLowerCase().includes(term);
+        case 'crmId':
+          return (b.crmId || '').toLowerCase().includes(term);
+        case 'pnr':
+          return (b.pnr || '').toLowerCase().includes(term) || (b.oldPnr || '').toLowerCase().includes(term);
+        case 'all':
+        default:
+          return (
+            b.crmId?.toLowerCase().includes(term) ||
+            b.pnr?.toLowerCase().includes(term) ||
+            b.oldPnr?.toLowerCase().includes(term) ||
+            b.airlineName?.toLowerCase().includes(term) ||
+            b.contactEmail?.toLowerCase().includes(term) ||
+            String(b.contactPhone || '').toLowerCase().includes(term) ||
+            matchesCchName ||
+            matchesCcLast4 ||
+            matchesPaxName ||
+            matchesRoute ||
+            matchesGateway ||
+            b.remarks?.toLowerCase().includes(term) ||
+            b.modificationDetails?.toLowerCase().includes(term) ||
+            b.cabinClass?.toLowerCase().includes(term) ||
+            b.tripType?.toLowerCase().includes(term)
+          );
+      }
     });
 
     // Apply Sorting
@@ -415,6 +490,7 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
     return sortConfig.direction === 'asc' ? <Clock className="w-3 h-3 ml-2 text-blue-600" /> : <Clock className="w-3 h-3 ml-2 text-blue-600 rotate-180" />;
   };
 
+  const uniqueAirlines = Array.from(new Set(bookings.map(b => b.airlineName).filter(Boolean).map(a => a.toUpperCase()))).sort();
   const filtered = applyFilters(bookings);
   const totalPages = Math.ceil(filtered.length / itemsPerPage);
   const paginatedData = filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -422,7 +498,7 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
   // Reset to first page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, statusFilter, agentFilter, dateFilter, filter, dateTypeFilter, customStartDate, customEndDate]);
+  }, [searchTerm, statusFilter, agentFilter, dateFilter, filter, dateTypeFilter, customStartDate, customEndDate, airlineFilter, paymentStatusFilter, searchTarget]);
 
   const handleExportCSV = () => {
     if (filtered.length === 0) {
@@ -488,14 +564,41 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
         <CardHeader className="bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800 py-8 px-10 transition-colors">
             <div className="flex flex-col gap-6">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-8">
-                    <div className="relative flex-1 max-w-xl">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                        <Input 
-                            placeholder="Search CRM ID, Passenger, Email, Phone, Cardholder..." 
-                            className="pl-12 h-12 bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 rounded-2xl text-sm font-medium focus:ring-4 focus:ring-blue-50 dark:focus:ring-blue-900/20 transition-all border-2 text-slate-900 dark:text-slate-100" 
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
+                    <div className="flex-1 max-w-2xl flex flex-col sm:flex-row gap-3">
+                      <div className="relative flex-1">
+                          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                          <Input 
+                              placeholder={
+                                searchTarget === 'paxName' ? "Search by Passenger Name..." :
+                                searchTarget === 'cchName' ? "Search by Cardholder Name (CCH)..." :
+                                searchTarget === 'ccLast4' ? "Search by Card Last 4 / Number..." :
+                                searchTarget === 'phone' ? "Search by Mobile/Phone Number..." :
+                                searchTarget === 'email' ? "Search by Contact Email..." :
+                                searchTarget === 'crmId' ? "Search by CRM ID..." :
+                                searchTarget === 'pnr' ? "Search by PNR / Record Locator..." :
+                                "Search CRM ID, Passenger, Email, Phone, Cardholder..."
+                              }
+                              className="pl-12 h-12 bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 border-2 rounded-2xl text-sm font-medium focus:ring-4 focus:ring-blue-50 dark:focus:ring-blue-900/20 transition-all border-2 text-slate-900 dark:text-slate-100 w-full" 
+                              value={searchTerm}
+                              onChange={(e) => setSearchTerm(e.target.value)}
+                          />
+                      </div>
+                      <div className="w-full sm:w-[190px] shrink-0">
+                        <select 
+                          value={searchTarget} 
+                          onChange={(e) => setSearchTarget(e.target.value as any)}
+                          className="w-full h-12 bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 border-2 rounded-2xl text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-4 focus:ring-blue-50 dark:focus:ring-blue-900/20 transition-all cursor-pointer px-4"
+                        >
+                          <option value="all">🔍 Search All fields</option>
+                          <option value="paxName">👤 Passenger Name</option>
+                          <option value="cchName">💳 Cardholder Name</option>
+                          <option value="ccLast4">🔢 Card Last 4 / Num</option>
+                          <option value="phone">📞 Mobile Number</option>
+                          <option value="email">✉️ Email Address</option>
+                          <option value="crmId">🆔 CRM ID</option>
+                          <option value="pnr">✈️ PNR / Locator</option>
+                        </select>
+                      </div>
                     </div>
                     <div className="flex items-center gap-3">
                         <Button 
@@ -525,13 +628,13 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                     >
                       <div className="flex flex-col gap-6 p-6 bg-slate-50/50 dark:bg-slate-800/20 rounded-3xl border border-slate-100 dark:border-slate-800 animate-in slide-in-from-top-4 duration-300">
                         {/* Selector Row */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                          <div className="space-y-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
+                          <div className="space-y-2 col-span-1">
                               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Lifecycle Status</label>
                               <select 
                                 value={statusFilter} 
                                 onChange={(e) => setStatusFilter(e.target.value)}
-                                className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all"
+                                className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all cursor-pointer"
                               >
                                 <option value="all">Any Status</option>
                                 <option value="draft">Draft</option>
@@ -545,12 +648,12 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                                 <option value="failed">Failed</option>
                               </select>
                           </div>
-                          <div className="space-y-2">
+                          <div className="space-y-2 col-span-1">
                               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Assigned Liaison</label>
                               <select 
                                 value={agentFilter} 
                                 onChange={(e) => setAgentFilter(e.target.value)}
-                                className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all"
+                                className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all cursor-pointer"
                               >
                                 <option value="all">Global (All Agents)</option>
                                 {users.map(u => (
@@ -558,12 +661,39 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                                 ))}
                               </select>
                           </div>
-                          <div className="space-y-2">
+                          <div className="space-y-2 col-span-1">
+                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Airline Carrier</label>
+                              <select 
+                                value={airlineFilter} 
+                                onChange={(e) => setAirlineFilter(e.target.value)}
+                                className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all cursor-pointer uppercase"
+                              >
+                                <option value="all">Any Airline</option>
+                                {uniqueAirlines.map(airline => (
+                                  <option key={airline} value={airline}>{airline}</option>
+                                ))}
+                              </select>
+                          </div>
+                          <div className="space-y-2 col-span-1">
+                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Payment Status</label>
+                              <select 
+                                value={paymentStatusFilter} 
+                                onChange={(e) => setPaymentStatusFilter(e.target.value)}
+                                className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all cursor-pointer"
+                              >
+                                <option value="all">Any Payment Status</option>
+                                <option value="authorized">Authorized / Held</option>
+                                <option value="charged">Captured / Charged</option>
+                                <option value="chargeback">Disputed / Chargeback</option>
+                                <option value="unpaid">Unpaid / Draft / Failed</option>
+                              </select>
+                          </div>
+                          <div className="space-y-2 col-span-1 sm:col-span-2 lg:col-span-1">
                               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Temporal Range</label>
                               <select 
                                 value={dateFilter} 
                                 onChange={(e) => setDateFilter(e.target.value)}
-                                className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all"
+                                className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all cursor-pointer"
                               >
                                 <option value="all">All Time</option>
                                 <option value="today">Today (Past 24h)</option>

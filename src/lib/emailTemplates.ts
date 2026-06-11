@@ -28,6 +28,7 @@ export interface EmailData {
   serviceFee?: number;
   refundQuote?: number;
   airlineCredits?: number;
+  refundType?: string;
   origin?: string;
   destination?: string;
   multiCitySegments?: { origin: string, destination: string, departureDate: string }[];
@@ -161,8 +162,19 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
   } else if (type === 'confirmation') {
     systemIntro = `We are pleased to confirm that your digital authorization for ${airlineHtml} (PNR: ${pnrHtml}) has been successfully recorded and processed. Your electronic tickets are now being finalized.`;
   } else if (type === 'refund') {
-    systemIntro = `${greeting}Your booking (${pnrHtml}) has been processed for a refund. To finalize the transfer of funds back to your original payment method and process the associated refund issuance fee${gatewayHtml}, your explicit authorization is required.${getSignatureText('refund issuance')}${footerText}`;
+    if (data.refundType === 'credit') {
+      const gatewayStrong = data.validatedGateway ? `<strong>${data.validatedGateway}</strong>` : '<strong>Airline Desk</strong>';
+      const approvedCreditsText = `Your booking (${pnrHtml}) has been approved for airline credits. The approved airline credits will be deposited directly into your airline account and may be used for future travel subject to airline policies. To finalize the airline credit issuance via ${gatewayStrong}, your authorization is required.`;
+      const authorizeCreditSig = `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize via ${gatewayStrong} to process the refund issuance fee and associated charges under the respective merchants to charge my card ending in ${cchDigits} for the refund issuance on the itinerary below.<br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
+      systemIntro = `${greeting}${approvedCreditsText}${authorizeCreditSig}${footerText}`;
+    } else {
+      systemIntro = `${greeting}Your booking (${pnrHtml}) has been processed for a refund. To finalize the transfer of funds back to your original payment method and process the associated refund issuance fee${gatewayHtml}, your explicit authorization is required.${getSignatureText('refund issuance')}${footerText}`;
+    }
   } else if (type === 'cancel') {
+    const gatewayStrongText = data.validatedGateway ? `via <strong>${data.validatedGateway}</strong>` : 'via Airline Desk';
+    const refundCancelSigText = `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize ${airlineHtml} and ${data.validatedGateway ? `via <strong>${data.validatedGateway}</strong>` : 'Airline Desk Services'} to process the above-mentioned charges under the respective merchants to charge my card ending in ${cchDigits} for the cancellation, rebooking, and fare difference on the itinerary below with ${airlineHtml}.<br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
+    systemIntro = `${greeting}We have successfully processed your cancellation and rebooking request for booking (${pnrHtml}). Your updated itinerary details are enclosed. To finalize the cancellation, rebooking, and any associated fare adjustments ${gatewayStrongText}, your authorization is required.${refundCancelSigText}${footerText}`;
+
      priceBreakdown = `
        <table style="width: 100%; border-collapse: separate; border-spacing: 0; margin: 25px 0; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background: #fff;">
           <thead>
@@ -237,14 +249,26 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
        </table>
      `;
   } else if (type === 'refund') {
-     priceBreakdown = `
-       <table class="price-table">
-          <tr><td class="label">Airline Cost</td><td class="value">${data.currency} ${data.airlineCharges?.toLocaleString() || '0.00'}</td></tr>
-          <tr><td class="label">Refund Issuance Fee</td><td class="value">${data.currency} ${data.serviceFee?.toLocaleString() || '0.00'}</td></tr>
-          <tr class="total-row"><td class="label" style="border-bottom: none; color: #0f172a; font-weight: 900;">Total Refund Quote</td><td class="value" style="color: ${theme.primary}; font-size: 22px; border-bottom: none; font-weight: 900;">${data.currency} ${(data.refundQuote || 0).toLocaleString()}</td></tr>
-          ${data.airlineCredits ? `<tr><td class="label" style="border-top: 1px dashed #cbd5e1; border-bottom: none; padding-top: 15px; color: #059669;">Airline Credits</td><td class="value" style="border-top: 1px dashed #cbd5e1; border-bottom: none; padding-top: 15px; color: #059669;">${data.currency} ${(data.airlineCredits || 0).toLocaleString()}</td></tr>` : ''}
-       </table>
-     `;
+     if (data.refundType === 'credit') {
+       priceBreakdown = `
+         <table class="price-table">
+            <tr><td class="label">Airline Cost</td><td class="value">${data.currency} ${data.airlineCharges?.toLocaleString() || '0.00'}</td></tr>
+            <tr><td class="label">Refund Issuance Fee</td><td class="value">${data.currency} ${data.serviceFee?.toLocaleString() || '0.00'}</td></tr>
+            <tr class="total-row"><td class="label" style="border-bottom: none; color: #059669; font-weight: 900;">Airline Credits</td><td class="value" style="color: #059669; font-size: 22px; border-bottom: none; font-weight: 900;">${(data.airlineCredits || 0).toLocaleString()} PTS</td></tr>
+         </table>
+         <p style="margin-top: 20px; font-size: 13px; color: #059669; line-height: 1.6; font-style: italic; background-color: #ecfdf5; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981; font-weight: 500;">Airline Credit is only valid for ${cchName} with ${airlineHtml} airline for future travel and must be utilized within 1 year from the date of ticketing.</p>
+       `;
+     } else {
+       priceBreakdown = `
+         <table class="price-table">
+            <tr><td class="label">Airline Cost</td><td class="value">${data.currency} ${data.airlineCharges?.toLocaleString() || '0.00'}</td></tr>
+            <tr><td class="label">Refund Issuance Fee</td><td class="value">${data.currency} ${data.serviceFee?.toLocaleString() || '0.00'}</td></tr>
+            <tr class="total-row"><td class="label" style="border-bottom: none; color: #0f172a; font-weight: 900;">Total Refund Quote</td><td class="value" style="color: ${theme.primary}; font-size: 22px; border-bottom: none; font-weight: 900;">${data.currency} ${(data.refundQuote || 0).toLocaleString()}</td></tr>
+            ${data.airlineCredits ? `<tr><td class="label" style="border-top: 1px dashed #cbd5e1; border-bottom: none; padding-top: 15px; color: #059669;">Airline Credits</td><td class="value" style="border-top: 1px dashed #cbd5e1; border-bottom: none; padding-top: 15px; color: #059669;">${(data.airlineCredits || 0).toLocaleString()} PTS</td></tr>` : ''}
+         </table>
+         ${data.airlineCredits ? `<p style="margin-top: 20px; font-size: 13px; color: #059669; line-height: 1.6; font-style: italic; background-color: #ecfdf5; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981; font-weight: 500;">Airline Credit is only valid for ${cchName} with ${airlineHtml} airline for future travel and must be utilized within 1 year from the date of ticketing.</p>` : ''}
+       `;
+     }
   } else if (type === 'cancel') {
      priceBreakdown = `
        <table class="price-table">
@@ -418,7 +442,7 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
             ` : ''}
           </div>
 
-          ${type !== 'auth' ? `<p style="font-size: 16px; margin-top: 0; color: #0f172a;">Dear <strong>${data.passengerName}</strong>,</p>` : ''}
+          ${(type !== 'auth' && type !== 'refund' && type !== 'cancel' && type !== 'changes') ? `<p style="font-size: 16px; margin-top: 0; color: #0f172a;">Dear <strong>${data.passengerName}</strong>,</p>` : ''}
           ${introTextHtml}
           
           ${(data.pnr || data.cabinClass || data.origin || data.destination || (data.multiCitySegments && data.multiCitySegments.length > 0) || data.packageRichText || data.snapshotUrl) ? `

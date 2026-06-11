@@ -485,7 +485,7 @@ function App() {
             
             {/* Mobile Header */}
             <div className="lg:hidden absolute top-0 left-0 right-0 h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 z-20">
-              <div className="flex items-center gap-3">
+              <Link to="/" className="flex items-center gap-2 px-1 hover:opacity-85 transition-opacity">
                 <div 
                   className="w-8 h-8 rounded shrink-0 flex items-center justify-center shadow-lg overflow-hidden border border-slate-700/50" 
                   style={{ backgroundColor: settings?.primaryColor || '#2563eb' }}
@@ -496,11 +496,26 @@ function App() {
                   }} />
                   <Plane className="w-5 h-5 text-white hidden" />
                 </div>
-                <h1 className="text-slate-900 dark:text-white font-bold tracking-tight text-lg">{settings?.organizationName || 'BLACKGRASS CRM'}</h1>
+                <h1 className="text-slate-900 dark:text-white font-black tracking-tight text-sm sm:text-base uppercase max-w-[120px] sm:max-w-[200px] truncate">{settings?.organizationName || 'BLACKGRASS CRM'}</h1>
+              </Link>
+              <div className="flex items-center gap-1 sm:gap-2">
+                <button className="text-slate-400 hover:text-slate-600 dark:hover:text-white p-1 transition-colors" onClick={() => setDarkMode(!darkMode)} title="Toggle Theme">
+                  {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                </button>
+                <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center font-bold text-white text-xs cursor-pointer hover:bg-blue-700 transition overflow-hidden border border-slate-200 dark:border-slate-800" onClick={() => { navigate('/profile'); setSidebarOpen(false); }} title="My Profile">
+                  {profile?.photoURL ? (
+                    <img src={profile.photoURL} alt="User" className="w-full h-full object-cover" />
+                  ) : (
+                    (profile?.username || user?.email || '?').charAt(0).toUpperCase()
+                  )}
+                </div>
+                <button className="p-1 text-slate-400 hover:text-red-500 transition-colors" onClick={logout} title="Logout">
+                  <LogOut className="w-4 h-4" />
+                </button>
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 dark:text-slate-400" onClick={() => setSidebarOpen(!sidebarOpen)}>
+                  {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+                </Button>
               </div>
-              <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)}>
-                {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-              </Button>
             </div>
 
             {/* Mobile Sidebar Overlay */}
@@ -516,7 +531,7 @@ function App() {
               "fixed inset-y-0 left-0 z-40 w-64 bg-slate-900 flex flex-col shrink-0 border-r border-slate-800 transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0",
               sidebarOpen ? "translate-x-0" : "-translate-x-full"
             )}>
-              <div className="p-6 hidden lg:flex items-center gap-3">
+              <Link to="/" className="p-6 hidden lg:flex items-center gap-3 hover:opacity-85 transition-opacity">
                 <div 
                   className="w-8 h-8 rounded shrink-0 flex items-center justify-center shadow-lg overflow-hidden border border-slate-700/50" 
                   style={{ backgroundColor: settings?.primaryColor || '#2563eb' }}
@@ -528,8 +543,8 @@ function App() {
                   }} />
                   <Plane className="w-5 h-5 text-white hidden" />
                 </div>
-                <h1 className="text-white font-bold tracking-tight text-lg">{settings?.organizationName || 'BLACKGRASS CRM'}</h1>
-              </div>
+                <h1 className="text-white font-black tracking-tight text-base uppercase truncate max-w-[155px]">{settings?.organizationName || 'BLACKGRASS CRM'}</h1>
+              </Link>
               
               {/* Mobile Sidebar Header */}
               <div className="p-6 lg:hidden flex flex-col pt-16">
@@ -563,8 +578,28 @@ function App() {
                   )}
                 </nav>
               </ScrollArea>
-              <div className="p-4 border-t border-slate-800 flex flex-col gap-4">
-                <div className="text-center pb-2">
+              <div className="p-4 border-t border-slate-800 flex flex-col gap-3 bg-slate-950/20">
+                {/* User Info Footing inside App navigation bar for better Phone experience */}
+                <div className="flex items-center justify-between gap-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-800/80">
+                  <div className="flex items-center gap-2.5 min-w-0 cursor-pointer" onClick={() => { navigate('/profile'); setSidebarOpen(false); }}>
+                    <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-black text-white text-xs overflow-hidden border border-slate-700 shrink-0">
+                      {profile?.photoURL ? (
+                        <img src={profile.photoURL} alt="User" className="w-full h-full object-cover" />
+                      ) : (
+                        (profile?.username || user?.email || '?').charAt(0).toUpperCase()
+                      )}
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <p className="text-[11px] text-white font-bold truncate pr-1">{profile?.username || user?.email}</p>
+                      <p className="text-[9px] text-slate-500 uppercase tracking-wider font-extrabold">{profile?.role}</p>
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-400 hover:text-red-400 hover:bg-slate-800 shrink-0" onClick={() => { logout(); setSidebarOpen(false); }}>
+                    <LogOut className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+
+                <div className="text-center">
                   {isSystemAdmin && (
                     <p className="text-[9px] text-slate-500 font-medium font-mono uppercase tracking-widest">© {new Date().getFullYear()} ALL RIGHTS RESERVED SELLER OF THE SOFTWARE</p>
                   )}
@@ -756,7 +791,7 @@ function App() {
               </header>
 
               {/* Page View */}
-              <div className="flex-1 overflow-auto p-8 relative">
+              <div className="flex-1 overflow-auto p-4 sm:p-6 md:p-8 relative">
                 {activeClient && isSystemAdmin && (
                    <div className="absolute top-4 right-8 z-50 flex items-center gap-3 bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300 text-[10px] uppercase font-black px-4 py-1.5 rounded-full border border-blue-200 dark:border-blue-800 shadow-sm">
                       Tenant View: {activeClient.name}
@@ -775,6 +810,7 @@ function App() {
                 )}
                 <Routes>
                   <Route path="/" element={<Dashboard />} />
+                  <Route path="/index.html" element={<Navigate to="/" replace />} />
                   <Route path="/clients" element={isSystemAdmin ? <ClientsPage /> : <Navigate to="/" />} />
                   <Route path="/bookings/new" element={<CreateBooking profile={profile} />} />
                   <Route path="/bookings/edit/:id" element={<CreateBooking profile={profile} />} />
