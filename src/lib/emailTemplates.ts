@@ -445,7 +445,7 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
           ${(type !== 'auth' && type !== 'refund' && type !== 'cancel' && type !== 'changes') ? `<p style="font-size: 16px; margin-top: 0; color: #0f172a;">Dear <strong>${data.passengerName}</strong>,</p>` : ''}
           ${introTextHtml}
           
-          ${(data.pnr || data.cabinClass || data.origin || data.destination || (data.multiCitySegments && data.multiCitySegments.length > 0) || data.packageRichText || data.snapshotUrl) ? `
+          ${(data.pnr || data.cabinClass || data.origin || data.destination || (data.multiCitySegments && data.multiCitySegments.length > 0) || data.packageRichText) ? `
           <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin: 25px 0;">
             <p style="font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; color: #94a3b8; margin: 0 0 15px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">Itinerary Overview</p>
             <table style="width: 100%; border-collapse: collapse;">
@@ -470,13 +470,15 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
               </div>
             </div>
             ` : ''}
+          </div>
+          ` : ''}
 
-            ${data.snapshotUrl ? `
-            <div style="margin-top: 25px; text-align: center;">
-              <p style="font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; color: #94a3b8; margin-bottom: 15px; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px; text-align: left;">Booking Snapshot</p>
-              <img src="${data.snapshotUrl}" alt="Booking Summary Snapshot" style="width: 100%; max-width: 100%; height: auto; border-radius: 8px; border: 1px solid #e2e8f0; display: block;" />
+          ${data.snapshotUrl ? `
+          <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin: 25px 0 35px 0; box-sizing: border-box; width: 100%; max-width: 100%;">
+            <p style="font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; color: #94a3b8; margin: 0 0 15px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">Booking Snapshot</p>
+            <div style="width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0; background: #ffffff;">
+              <img src="${data.snapshotUrl}" alt="Booking Summary Snapshot" style="width: 100%; max-width: 100%; height: auto; display: block;" />
             </div>
-            ` : ''}
           </div>
           ` : ''}
 

@@ -134,16 +134,11 @@ export default function CreateBooking({ profile }: { profile: any }) {
     const a = parseFloat(newPricing.airline as string) || 0;
     const s = parseFloat(newPricing.service as string) || 0;
     
-    if (emailTemplateType === 'refund') {
-      const calculatedRefund = Number((a + s).toFixed(2));
-      if (field === 'refundQuote') {
-        newPricing.refundQuote = parseFloat(value) || 0;
-      } else {
-        newPricing.refundQuote = calculatedRefund;
-      }
-      newPricing.total = newPricing.refundQuote;
-    } else {
-      newPricing.total = Number((a + s).toFixed(2));
+    newPricing.total = Number((a + s).toFixed(2));
+    if (field === 'refundQuote') {
+      newPricing.refundQuote = parseFloat(value) || 0;
+    } else if (field === 'airlineCredits') {
+      newPricing.airlineCredits = parseFloat(value) || 0;
     }
     setPricing(newPricing as any);
   };
@@ -364,25 +359,14 @@ export default function CreateBooking({ profile }: { profile: any }) {
   useEffect(() => {
     const a = parseFloat(pricing.airline as any) || 0;
     const s = parseFloat(pricing.service as any) || 0;
-    if (emailTemplateType === 'refund') {
-      const expectedRefund = Number((a + s).toFixed(2));
-      if (pricing.refundQuote !== expectedRefund || pricing.total !== expectedRefund) {
-        setPricing(prev => ({
-          ...prev,
-          refundQuote: expectedRefund,
-          total: expectedRefund
-        }));
-      }
-    } else {
-      const expectedTotal = Number((a + s).toFixed(2));
-      if (pricing.total !== expectedTotal) {
-        setPricing(prev => ({
-          ...prev,
-          total: expectedTotal
-        }));
-      }
+    const expectedTotal = Number((a + s).toFixed(2));
+    if (pricing.total !== expectedTotal) {
+      setPricing(prev => ({
+        ...prev,
+        total: expectedTotal
+      }));
     }
-  }, [emailTemplateType, pricing.airline, pricing.service, pricing.refundQuote, pricing.total]);
+  }, [pricing.airline, pricing.service, pricing.total]);
 
   const handleCopyRawHtml = async () => {
     let snapshotBase64 = null;
@@ -1779,7 +1763,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
                        </div>
                        <div>
                            <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-50 mb-1">
-                             {emailTemplateType === 'refund' ? 'Total Return Sum' :
+                             {emailTemplateType === 'refund' ? 'Total Refund Charges' :
                               emailTemplateType === 'changes' ? 'Total Fare Difference' : 'Total Authorization Sum'}
                            </p>
                           <div className="flex items-baseline gap-2">

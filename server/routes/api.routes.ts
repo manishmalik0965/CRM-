@@ -172,7 +172,23 @@ router.post('/audit-logs', async (req, res) => {
     try {
         const { action, details, bookingId, tenantId } = req.body;
         const companyId = tenantId || getCompanyId(req) || 'legacy-tenant-1';
-        const userId = getUserId(req);
+        let userId = getUserId(req);
+
+        // Validate that userId exists in the users table to avoid foreign key errors
+        const [userExists]: any = await db.query('SELECT id FROM users WHERE id = ? LIMIT 1', [userId]);
+        if (userExists.length === 0) {
+            // Find a valid fallback user in the same company
+            const [companyUser]: any = await db.query('SELECT id FROM users WHERE company_id = ? LIMIT 1', [companyId]);
+            if (companyUser.length > 0) {
+                userId = companyUser[0].id;
+            } else {
+                // Find any valid user in the entire system
+                const [anyUser]: any = await db.query('SELECT id FROM users LIMIT 1');
+                if (anyUser.length > 0) {
+                    userId = anyUser[0].id;
+                }
+            }
+        }
 
         const id = uuidv4();
         const detailsJson = JSON.stringify({ details, bookingId });
