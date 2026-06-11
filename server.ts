@@ -25,7 +25,8 @@ function processAttachmentsAndRichText(attachmentsList: any[] | undefined, packa
           filename: `inline-image-${counter}.${ext}`,
           content: base64Data,
           encoding: 'base64',
-          cid: cid
+          cid: cid,
+          contentDisposition: 'inline'
         });
         return `src="cid:${cid}"`;
       } catch (e) {
@@ -42,7 +43,8 @@ function processAttachmentsAndRichText(attachmentsList: any[] | undefined, packa
         filename: `Booking_Snapshot_${bookingId}.jpg`,
         content: snapshotBase64,
         encoding: 'base64',
-        cid: 'bookingsnapshot'
+        cid: 'bookingsnapshot',
+        contentDisposition: 'inline'
       });
     } catch (e) {
        console.error("Failed to process snapshotBase64", e);
@@ -50,6 +52,101 @@ function processAttachmentsAndRichText(attachmentsList: any[] | undefined, packa
   }
 
   return { finalAttachments, processedRichText, snapshotUrl };
+}
+
+function formatIcsDate(date: Date): string {
+  const yyyy = date.getUTCFullYear();
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(date.getUTCDate()).padStart(2, '0');
+  const hh = String(date.getUTCHours()).padStart(2, '0');
+  const min = String(date.getUTCMinutes()).padStart(2, '0');
+  const ss = String(date.getUTCSeconds()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}T${hh}${min}${ss}Z`;
+}
+
+function parseToIcsDate(dateStr: string | undefined, defaultHour: number): string {
+  if (!dateStr) {
+    const d = new Date();
+    d.setUTCHours(defaultHour, 0, 0, 0);
+    return formatIcsDate(d);
+  }
+  try {
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+      const isDateOnly = !dateStr.includes('T') && !dateStr.includes(':');
+      if (isDateOnly) {
+        d.setUTCHours(defaultHour, 0, 0, 0);
+      }
+      return formatIcsDate(d);
+    }
+  } catch (e) {}
+  const d = new Date();
+  d.setUTCHours(defaultHour, 0, 0, 0);
+  return formatIcsDate(d);
+}
+
+function generateIcsCalendarInvite(details: any): string {
+  const { bookingId, airlineName, origin, destination, pnr, passengerName, cabinClass, tripType, totalAmount, currency, departureDate, arrivalDate } = details;
+  
+  const formattedDtStamp = formatIcsDate(new Date());
+  const formattedDeparture = parseToIcsDate(departureDate, 10);
+  
+  let formattedArrival;
+  if (arrivalDate) {
+    formattedArrival = parseToIcsDate(arrivalDate, 13);
+  } else {
+    try {
+      const depDateObj = new Date(departureDate || new Date());
+      if (isNaN(depDateObj.getTime())) {
+        const d = new Date();
+        d.setUTCHours(13, 0, 0, 0);
+        formattedArrival = formatIcsDate(d);
+      } else {
+        const isDateOnly = departureDate && !departureDate.includes('T') && !departureDate.includes(':');
+        if (isDateOnly) {
+          depDateObj.setUTCHours(10, 0, 0, 0);
+        }
+        depDateObj.setUTCHours(depDateObj.getUTCHours() + 3);
+        formattedArrival = formatIcsDate(depDateObj);
+      }
+    } catch(e) {
+      const d = new Date();
+      d.setUTCHours(13, 0, 0, 0);
+      formattedArrival = formatIcsDate(d);
+    }
+  }
+
+  const airline = airlineName || 'Airline';
+  const displayOrigin = origin || 'Origin';
+  const displayDest = destination || 'Destination';
+  const pnrVal = pnr || 'PENDING';
+  const nameVal = passengerName || 'Valued Customer';
+  
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//SKY CRM//Travel Agency//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:REQUEST',
+    'BEGIN:VEVENT',
+    `UID:booking-${bookingId || Date.now()}@sky-crm.com`,
+    `DTSTAMP:${formattedDtStamp}`,
+    `DTSTART:${formattedDeparture}`,
+    `DTEND:${formattedArrival}`,
+    `SUMMARY:Flight Booking Reminder: ${airline} ${displayOrigin} -> ${displayDest}`,
+    `DESCRIPTION:Your upcoming flight booking is scheduled.\\n\\nAirline: ${airline}\\nRoute: ${displayOrigin} to ${displayDest}\\nPNR / Record Locator: ${pnrVal}\\nPassenger: ${nameVal}\\nCabin Class: ${cabinClass || 'Economy'}\\nTrip Type: ${tripType || 'One-way'}\\nTotal Paid: ${currency || 'USD'} ${totalAmount || 0}\\n\\nThank you for booking with us.`,
+    `LOCATION:${displayOrigin} to ${displayDest}`,
+    'STATUS:CONFIRMED',
+    'SEQUENCE:0',
+    'TRANSP:OPAQUE',
+    'BEGIN:VALARM',
+    'TRIGGER:-PT2H',
+    'ACTION:DISPLAY',
+    'DESCRIPTION:Flight Booking Reminder',
+    'END:VALARM',
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n');
 }
 
 async function startServer() {
@@ -442,7 +539,8 @@ const getAirlineDomainAsync = async (name: string) => {
             filename: `airline-logo.png`,
             content: Buffer.from(buffer).toString('base64'),
             encoding: 'base64',
-            cid: 'airlinelogo'
+            cid: 'airlinelogo',
+            contentDisposition: 'inline'
           });
           airlineDomainFinal = 'cid:airlinelogo';
         }
@@ -504,7 +602,25 @@ const getAirlineDomainAsync = async (name: string) => {
           to: email,
           subject: `${(airlineName || '').toUpperCase()} NEW BOOKING AUTHORISATION`,
           html: html,
-          attachments: finalAttachments
+          attachments: finalAttachments,
+          icalEvent: {
+            filename: 'flight-reminder.ics',
+            method: 'REQUEST',
+            content: generateIcsCalendarInvite({
+              bookingId,
+              airlineName,
+              origin,
+              destination,
+              pnr,
+              passengerName,
+              cabinClass,
+              tripType,
+              totalAmount,
+              currency,
+              departureDate,
+              arrivalDate
+            })
+          }
         });
 
         console.log(`✅ SMTP SUCCESS: Sent via node-mailer to ${email}`);
@@ -576,7 +692,8 @@ const getAirlineDomainAsync = async (name: string) => {
           filename: `signature.png`,
           content: signatureBase64,
           encoding: 'base64',
-          cid: 'signatureimg'
+          cid: 'signatureimg',
+          contentDisposition: 'inline'
         });
       } catch (e) {
         console.error("Failed to process signatureBase64", e);
@@ -603,7 +720,8 @@ const getAirlineDomainAsync = async (name: string) => {
             filename: `airline-logo.png`,
             content: Buffer.from(buffer).toString('base64'),
             encoding: 'base64',
-            cid: 'airlinelogo'
+            cid: 'airlinelogo',
+            contentDisposition: 'inline'
           });
           airlineDomainFinal = 'cid:airlinelogo';
         }
@@ -660,7 +778,25 @@ const getAirlineDomainAsync = async (name: string) => {
           to: email,
           subject: `${(airlineName || '').toUpperCase()} BOOKING CONFIRMATION ${(bookingId || '').toUpperCase()}`,
           html: html,
-          attachments: finalAttachments
+          attachments: finalAttachments,
+          icalEvent: {
+            filename: 'flight-reminder.ics',
+            method: 'REQUEST',
+            content: generateIcsCalendarInvite({
+              bookingId,
+              airlineName,
+              origin,
+              destination,
+              pnr,
+              passengerName,
+              cabinClass,
+              tripType,
+              totalAmount,
+              currency,
+              departureDate,
+              arrivalDate
+            })
+          }
         });
         console.log(`✅ SMTP SUCCESS: Sent confirmation via node-mailer to ${email}`);
         return res.json({ success: true, message: "Confirmation receipt sent to " + email });
@@ -703,7 +839,8 @@ const getAirlineDomainAsync = async (name: string) => {
             filename: `airline-logo.png`,
             content: Buffer.from(buffer).toString('base64'),
             encoding: 'base64',
-            cid: 'airlinelogo'
+            cid: 'airlinelogo',
+            contentDisposition: 'inline'
           });
           airlineDomainFinal = 'cid:airlinelogo';
         }
@@ -760,7 +897,8 @@ const getAirlineDomainAsync = async (name: string) => {
             filename: `airline-logo.png`,
             content: Buffer.from(buffer).toString('base64'),
             encoding: 'base64',
-            cid: 'airlinelogo'
+            cid: 'airlinelogo',
+            contentDisposition: 'inline'
           });
           airlineDomainFinal = 'cid:airlinelogo';
         }
@@ -817,7 +955,8 @@ const getAirlineDomainAsync = async (name: string) => {
             filename: `airline-logo.png`,
             content: Buffer.from(buffer).toString('base64'),
             encoding: 'base64',
-            cid: 'airlinelogo'
+            cid: 'airlinelogo',
+            contentDisposition: 'inline'
           });
           airlineDomainFinal = 'cid:airlinelogo';
         }
@@ -843,7 +982,25 @@ const getAirlineDomainAsync = async (name: string) => {
         to: email,
         subject: `${(airlineName || '').toUpperCase()} CHANGES ${(crmId || pnr || '').toUpperCase()}`,
         html: html,
-        attachments: finalAttachments
+        attachments: finalAttachments,
+        icalEvent: {
+          filename: 'flight-reminder.ics',
+          method: 'REQUEST',
+          content: generateIcsCalendarInvite({
+                     bookingId: bookingId || crmId,
+                     airlineName,
+                     origin,
+                     destination,
+                     pnr,
+                     passengerName,
+                     cabinClass: req.body.cabinClass,
+                     tripType: req.body.tripType,
+                     totalAmount: totalAmount || req.body.totalAmount,
+                     currency: currency || req.body.currency,
+                     departureDate: req.body.departureDate,
+                     arrivalDate: req.body.arrivalDate
+                   })
+        }
       });
       return res.json({ success: true, message: "Changes notification sent" });
     } catch (error: any) {

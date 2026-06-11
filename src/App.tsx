@@ -450,8 +450,9 @@ function App() {
     }
   };
 
-  const isSystemAdmin = user?.email === 'manishmalik0965@gmail.com' || profile?.role === 'Superadmin' || user?.role === 'Superadmin';
-  const isTenantAdmin = profile?.role === 'Admin' && !isSystemAdmin;
+  const userCompanyId = user?.company_id || user?.companyId || clientId;
+  const isSystemAdmin = user?.email === 'manishmalik0965@gmail.com' || profile?.role === 'Superadmin' || user?.role === 'Superadmin' || (userCompanyId === 'legacy-tenant-1' && (profile?.role === 'Admin' || user?.role === 'Admin'));
+  const isTenantAdmin = profile?.role === 'Admin' && !isSystemAdmin && userCompanyId !== 'legacy-tenant-1';
   const isAdmin = (profile?.role === 'Admin' || profile?.role === 'Superadmin' || isSystemAdmin) && !isTenantAdmin;
   const isManager = (profile?.role === 'Admin' || profile?.role === 'Manager' || profile?.role === 'Superadmin' || isSystemAdmin) && !isTenantAdmin;
   const isAgent = !!profile && !isTenantAdmin; // Everyone with a profile is at least an agent
@@ -472,10 +473,11 @@ function App() {
         <Route path="/authorize/:bookingId" element={<AuthorizationPage />} />
         
         {/* Login Route */}
-        <Route path="/login" element={user && sessionStorage.getItem('mfa_verified') === 'true' ? <Navigate to={'/' + window.location.search} /> : <LoginPage />} />
+        <Route path="/login" element={user && (!user.totp_enabled || sessionStorage.getItem('mfa_verified') === 'true') ? <Navigate to={'/' + window.location.search} /> : <LoginPage />} />
 
         {/* Protected CRM Routes */}
         <Route path="/*" element={user && profile && (
+            !user.totp_enabled ||
             sessionStorage.getItem('mfa_verified') === 'true' || 
             (!settings?.globalTwoFactorEnabled && ((profile.role !== 'Admin' && profile.role !== 'Manager') || !settings?.twoFactorEnabled))
         ) ? (
@@ -536,39 +538,28 @@ function App() {
 
               <ScrollArea className="flex-1 px-4" id="sidebar-scroll-area">
                 <nav className="space-y-1" id="sidebar-navigation">
-                  {isTenantAdmin ? (
+                  <NavItem to="/" iconName="LayoutDashboard" label="Dashboard" />
+                  {isAgent && <NavItem to="/bookings/new" iconName="PlusCircle" label="Create Booking" />}
+                  <NavItem to="/bookings" iconName="FileEdit" label="All Bookings" />
+                  <NavItem to="/drafts" iconName="FileEdit" label="Draft Bookings" />
+                  <NavItem to="/authorized" iconName="CheckCircle2" label="Authorized" />
+                  
+                  {isManager && (
                     <>
-                      <div id="tenant-workspace-header" className="pt-2 pb-2 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Workspace</div>
-                      <NavItem to="/" iconName="LayoutDashboard" label="Dashboard" />
+                      <div className="pt-6 pb-2 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Management</div>
+                      <NavItem to="/users" iconName="Users" label="Manage Users" />
+                      <NavItem to="/analytics" iconName="BarChart3" label="Analytics" />
+                    </>
+                  )}
+                  {isAdmin && (
+                    <>
+                      <NavItem to="/logs" iconName="Activity" label="Activity Logs" />
+                      <NavItem to="/templates" iconName="Mail" label="Email Templates" />
                       <NavItem to="/settings" iconName="Settings" label="Settings" />
-                      <NavItem to="/profile" iconName="User" label="Profile" />
                     </>
-                  ) : (
-                    <>
-                      <NavItem to="/" iconName="LayoutDashboard" label="Dashboard" />
-                      {profile?.role === 'Agent' && <NavItem to="/bookings/new" iconName="PlusCircle" label="Create Booking" />}
-                      <NavItem to="/bookings" iconName="FileEdit" label="All Bookings" />
-                      <NavItem to="/drafts" iconName="FileEdit" label="Draft Bookings" />
-                      <NavItem to="/authorized" iconName="CheckCircle2" label="Authorized" />
-                      
-                      {isManager && (
-                        <>
-                          <div className="pt-6 pb-2 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Management</div>
-                          <NavItem to="/users" iconName="Users" label="Manage Users" />
-                          <NavItem to="/analytics" iconName="BarChart3" label="Analytics" />
-                        </>
-                      )}
-                      {isAdmin && (
-                        <>
-                          <NavItem to="/logs" iconName="Activity" label="Activity Logs" />
-                          <NavItem to="/templates" iconName="Mail" label="Email Templates" />
-                          <NavItem to="/settings" iconName="Settings" label="Settings" />
-                        </>
-                      )}
-                      {isSystemAdmin && (
-                        <NavItem to="/clients" iconName="Building" label="Clients" />
-                      )}
-                    </>
+                  )}
+                  {isSystemAdmin && (
+                    <NavItem to="/clients" iconName="Building" label="Clients" />
                   )}
                 </nav>
               </ScrollArea>
@@ -775,7 +766,7 @@ function App() {
                          className="h-5 w-5 text-red-600 hover:text-red-700 hover:bg-red-100 rounded-full"
                          onClick={() => {
                             localStorage.removeItem('tenantId');
-                            window.location.href = '/clients';
+                            window.location.href = '/';
                          }}
                       >
                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -785,16 +776,16 @@ function App() {
                 <Routes>
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/clients" element={isSystemAdmin ? <ClientsPage /> : <Navigate to="/" />} />
-                  <Route path="/bookings/new" element={isTenantAdmin ? <Navigate to="/settings" /> : <CreateBooking profile={profile} />} />
-                  <Route path="/bookings/edit/:id" element={isTenantAdmin ? <Navigate to="/settings" /> : <CreateBooking profile={profile} />} />
-                  <Route path="/bookings" element={isTenantAdmin ? <Navigate to="/settings" /> : <AllBookings filter="all" profile={profile} />} />
-                  <Route path="/drafts" element={isTenantAdmin ? <Navigate to="/settings" /> : <AllBookings filter="draft" profile={profile} />} />
-                  <Route path="/authorized" element={isTenantAdmin ? <Navigate to="/settings" /> : <AllBookings filter="authorized" profile={profile} />} />
-                  <Route path="/users" element={!isTenantAdmin && isManager ? <UsersPage profile={profile} /> : <Navigate to="/" />} />
-                  <Route path="/analytics" element={isTenantAdmin ? <Navigate to="/settings" /> : <Dashboard />} />
-                  <Route path="/bookings/:id" element={isTenantAdmin ? <Navigate to="/settings" /> : <AllBookings filter="all" />} />
-                  <Route path="/logs" element={!isTenantAdmin && isAdmin ? <AdminRoute isAdmin={isAdmin}><ActivityLogs /></AdminRoute> : <Navigate to="/" />} />
-                  <Route path="/templates" element={!isTenantAdmin && isAdmin ? <AdminRoute isAdmin={isAdmin}><EmailTemplatesPage /></AdminRoute> : <Navigate to="/" />} />
+                  <Route path="/bookings/new" element={<CreateBooking profile={profile} />} />
+                  <Route path="/bookings/edit/:id" element={<CreateBooking profile={profile} />} />
+                  <Route path="/bookings" element={<AllBookings filter="all" profile={profile} />} />
+                  <Route path="/drafts" element={<AllBookings filter="draft" profile={profile} />} />
+                  <Route path="/authorized" element={<AllBookings filter="authorized" profile={profile} />} />
+                  <Route path="/users" element={isManager ? <UsersPage profile={profile} /> : <Navigate to="/" />} />
+                  <Route path="/analytics" element={<Dashboard />} />
+                  <Route path="/bookings/:id" element={<AllBookings filter="all" />} />
+                  <Route path="/logs" element={isAdmin ? <AdminRoute isAdmin={isAdmin}><ActivityLogs /></AdminRoute> : <Navigate to="/" />} />
+                  <Route path="/templates" element={isAdmin ? <AdminRoute isAdmin={isAdmin}><EmailTemplatesPage /></AdminRoute> : <Navigate to="/" />} />
                   <Route path="/settings" element={<AdminRoute isAdmin={isSystemAdmin || profile?.role === 'Admin'}><Settings profile={profile} /></AdminRoute>} />
                   <Route path="/profile" element={<ProfilePage profile={profile} />} />
                   <Route path="*" element={<Navigate to="/" />} />

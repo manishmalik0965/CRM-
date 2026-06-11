@@ -130,11 +130,11 @@ export default function CreateBooking({ profile }: { profile: any }) {
   const [addingNewCard, setAddingNewCard] = useState(false);
 
   const handlePriceChange = (field: string, value: string) => {
-    const newPricing = { ...pricing, [field]: value === '' ? '' : Number(value) };
-    const a = Number(newPricing.airline) || 0;
-    const s = Number(newPricing.service) || 0;
-    newPricing.total = a + s;
-    setPricing(newPricing);
+    const newPricing = { ...pricing, [field]: value };
+    const a = parseFloat(newPricing.airline as string) || 0;
+    const s = parseFloat(newPricing.service as string) || 0;
+    newPricing.total = Number((a + s).toFixed(2));
+    setPricing(newPricing as any);
   };
 
   const handleCCNumberChange = (e: any) => {
@@ -612,6 +612,33 @@ export default function CreateBooking({ profile }: { profile: any }) {
       }
     } catch (err: any) {
       toast.error('Failed to save');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveRemarksOnly = async () => {
+    if (!id) {
+      toast.error('Booking has not been created yet. Save as draft or initialize the booking first.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const finalRemarks = newRemark.trim() ? (remarks ? remarks + '\n\n' : '') + `[${profile?.username || profile?.email || 'System'}] ${new Date().toLocaleString()}:\n${newRemark.trim()}` : remarks;
+
+      // Prepare request body where details contains remarks. Put handles nesting of details via ...details in the api route.
+      await api.put('/bookings/' + id, {
+        remarks: finalRemarks
+      });
+
+      await logAudit(AuditAction.BOOKING_EDITED, `Booking remarks updated.`, id);
+
+      setRemarks(finalRemarks);
+      setNewRemark('');
+      toast.success('Remark added and saved successfully');
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Failed to save remark: ' + err.message);
     } finally {
       setLoading(false);
     }

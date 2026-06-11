@@ -82,8 +82,9 @@ export default function Dashboard() {
 
   const headerDetails = getDashboardHeader();
 
-  const isSystemAdmin = user?.email === 'manishmalik0965@gmail.com';
-  const isTenantAdmin = user?.role === 'Admin' && !isSystemAdmin;
+  const userCompanyId = user?.company_id || user?.companyId;
+  const isSystemAdmin = user?.email === 'manishmalik0965@gmail.com' || user?.role === 'Superadmin' || (userCompanyId === 'legacy-tenant-1' && user?.role === 'Admin');
+  const isTenantAdmin = user?.role === 'Admin' && !isSystemAdmin && userCompanyId !== 'legacy-tenant-1';
 
   const htmlCode = `<!DOCTYPE html>
 <html>
