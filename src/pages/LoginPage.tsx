@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Plane } from 'lucide-react';
+import { Plane, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -21,6 +21,7 @@ export default function LoginPage() {
   const [showOtp, setShowOtp] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [mfaToken, setMfaToken] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   // Brand States
   const [branding, setBranding] = useState({
@@ -162,17 +163,26 @@ export default function LoginPage() {
                 required
                 className="h-12 bg-slate-50 dark:bg-slate-900 border-none focus-visible:ring-1 focus-visible:ring-blue-500"
               />
-              <Input 
-                type="password" 
-                placeholder="Password" 
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  setAuthError(null);
-                }}
-                required
-                className="h-12 bg-slate-50 dark:bg-slate-900 border-none focus-visible:ring-1 focus-visible:ring-blue-500"
-              />
+              <div className="relative">
+                <Input 
+                  type={showPassword ? "text" : "password"} 
+                  placeholder="Password" 
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setAuthError(null);
+                  }}
+                  required
+                  className="h-12 bg-slate-50 dark:bg-slate-900 border-none focus-visible:ring-1 focus-visible:ring-blue-500 pr-10 w-full"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors bg-transparent border-none focus:outline-none cursor-pointer"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             <Button 

@@ -153,8 +153,12 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
 
   const handleDownloadPdf = async (booking: any, type: 'confirmation' | 'auth' | 'invoice') => {
     try {
-      const pSnap = { docs: [] };
-      const passengers = pSnap.docs.map(d => d.data());
+      let passengers = [];
+      if (Array.isArray(booking.passengerDetails)) {
+        passengers = booking.passengerDetails;
+      } else if (Array.isArray(booking.passengerNames)) {
+        passengers = booking.passengerNames.map((n: any) => typeof n === 'string' ? { name: n } : n);
+      }
       
       const branding = settings ? {
         organizationName: settings.organizationName,

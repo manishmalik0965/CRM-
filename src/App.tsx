@@ -47,6 +47,7 @@ const UsersPage = React.lazy(() => import('./pages/UsersPage'));
 const ClientsPage = React.lazy(() => import('./pages/ClientsPage'));
 const ProfilePage = React.lazy(() => import('./pages/ProfilePage'));
 
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
 
@@ -204,6 +205,88 @@ function App() {
   const [agentStatus, setAgentStatus] = useState<'Live' | 'Break' | 'Logged Out'>('Live');
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+
+  // Progressive Web App Installation Hooks
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallBtn, setShowInstallBtn] = useState(false);
+  const [isInstalled, setIsInstalled] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      toast.success("Connection restored! Syncing CRM data with servers...", {
+        duration: 4000
+      });
+      
+      // Trigger background sync if supported
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.ready.then((registration: any) => {
+          if (registration.sync) {
+            registration.sync.register('sync-crm-data').catch((err: any) => {
+              console.warn('Background Sync registration failed, running normal refetch:', err);
+            });
+          }
+        });
+      }
+
+      // Fire a custom event to notify all active pages to refetch details
+      window.dispatchEvent(new CustomEvent('crm-sync-refresh'));
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      toast.error("You are currently offline. Operations will cached locally until internet connection is restored.", {
+        duration: 5000
+      });
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    // Detect standalone display mode
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
+                         (window.navigator as any).standalone === true || 
+                         document.referrer.includes('android-app://');
+    setIsInstalled(isStandalone);
+
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallBtn(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    const handleAppInstalled = () => {
+      console.log('CRM PWA application installed successfully!');
+      setIsInstalled(true);
+      setShowInstallBtn(false);
+      setDeferredPrompt(null);
+    };
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    console.log(`PWA installation choice outcome: ${outcome}`);
+    setDeferredPrompt(null);
+    setShowInstallBtn(false);
+  };
 
   useEffect(() => {
     if (user?.id) {
@@ -634,13 +717,14 @@ function App() {
               </div>
             </div>
 
-            {/* Mobile Sidebar Overlay */}
-            {sidebarOpen && (
-              <div 
-                className="lg:hidden fixed inset-0 bg-black/50 z-30"
-                onClick={() => setSidebarOpen(false)}
-              />
-            )}
+            {/* Mobile Sidebar Overlay with CSS transitions */}
+            <div 
+              className={cn(
+                "lg:hidden fixed inset-0 bg-black/50 z-30 transition-opacity duration-300 ease-in-out",
+                sidebarOpen ? "opacity-100 pointer-events-auto font-sans" : "opacity-0 pointer-events-none font-sans"
+              )}
+              onClick={() => setSidebarOpen(false)}
+            />
 
             {/* Sidebar */}
             <aside className={cn(
@@ -695,6 +779,15 @@ function App() {
                 </nav>
               </ScrollArea>
               <div className="p-4 border-t border-slate-800 flex flex-col gap-3 bg-slate-950/20">
+                {showInstallBtn && (
+                  <button 
+                    onClick={handleInstallClick}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl transition duration-150 shadow-md active:scale-[0.98]"
+                  >
+                    <Suspense fallback={null}><LazyIcon name="Download" className="w-3.5 h-3.5" /></Suspense>
+                    <span>Install CRM Software</span>
+                  </button>
+                )}
                 {/* User Info Footing inside App navigation bar for better Phone experience */}
                 <div className="flex items-center justify-between gap-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-800/80">
                   <div className="flex items-center gap-2.5 min-w-0 cursor-pointer" onClick={() => { navigate('/profile'); setSidebarOpen(false); }}>
@@ -882,6 +975,16 @@ function App() {
                       </ScrollArea>
                     </PopoverContent>
                   </Popover>
+                  {showInstallBtn && (
+                    <button 
+                      onClick={handleInstallClick}
+                      className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-[10px] uppercase tracking-widest rounded-full transition duration-150 shadow-md shadow-blue-500/10 active:scale-[0.98]"
+                      title="Install CRM as Standalone Desktop Software"
+                    >
+                      <Suspense fallback={null}><LazyIcon name="Download" className="w-3.5 h-3.5" /></Suspense>
+                      <span>Install App</span>
+                    </button>
+                  )}
                   <Separator orientation="vertical" className="h-6 dark:bg-slate-700" />
                   <button 
                     onClick={() => setShowShortcutsHelp(true)}
@@ -934,24 +1037,26 @@ function App() {
                       </Button>
                    </div>
                 )}
-                <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/index.html" element={<Navigate to="/" replace />} />
-                  <Route path="/clients" element={isSystemAdmin ? <ClientsPage /> : <Navigate to="/" />} />
-                  <Route path="/bookings/new" element={<CreateBooking profile={profile} />} />
-                  <Route path="/bookings/edit/:id" element={<CreateBooking profile={profile} />} />
-                  <Route path="/bookings" element={<AllBookings filter="all" profile={profile} />} />
-                  <Route path="/drafts" element={<AllBookings filter="draft" profile={profile} />} />
-                  <Route path="/authorized" element={<AllBookings filter="authorized" profile={profile} />} />
-                  <Route path="/users" element={isManager ? <UsersPage profile={profile} /> : <Navigate to="/" />} />
-                  <Route path="/analytics" element={<Dashboard />} />
-                  <Route path="/bookings/:id" element={<AllBookings filter="all" />} />
-                  <Route path="/logs" element={isAdmin ? <AdminRoute isAdmin={isAdmin}><ActivityLogs /></AdminRoute> : <Navigate to="/" />} />
-                  <Route path="/templates" element={isAdmin ? <AdminRoute isAdmin={isAdmin}><EmailTemplatesPage /></AdminRoute> : <Navigate to="/" />} />
-                  <Route path="/settings" element={<AdminRoute isAdmin={isSystemAdmin || profile?.role === 'Admin'}><Settings profile={profile} /></AdminRoute>} />
-                  <Route path="/profile" element={<ProfilePage profile={profile} />} />
-                  <Route path="*" element={<Navigate to="/" />} />
-                </Routes>
+                <ErrorBoundary>
+                  <Routes>
+                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/index.html" element={<Navigate to="/" replace />} />
+                    <Route path="/clients" element={isSystemAdmin ? <ClientsPage /> : <Navigate to="/" />} />
+                    <Route path="/bookings/new" element={<CreateBooking profile={profile} />} />
+                    <Route path="/bookings/edit/:id" element={<CreateBooking profile={profile} />} />
+                    <Route path="/bookings" element={<AllBookings filter="all" profile={profile} />} />
+                    <Route path="/drafts" element={<AllBookings filter="draft" profile={profile} />} />
+                    <Route path="/authorized" element={<AllBookings filter="authorized" profile={profile} />} />
+                    <Route path="/users" element={isManager ? <UsersPage profile={profile} /> : <Navigate to="/" />} />
+                    <Route path="/analytics" element={<Dashboard />} />
+                    <Route path="/bookings/:id" element={<AllBookings filter="all" />} />
+                    <Route path="/logs" element={isAdmin ? <AdminRoute isAdmin={isAdmin}><ActivityLogs /></AdminRoute> : <Navigate to="/" />} />
+                    <Route path="/templates" element={isAdmin ? <AdminRoute isAdmin={isAdmin}><EmailTemplatesPage /></AdminRoute> : <Navigate to="/" />} />
+                    <Route path="/settings" element={<AdminRoute isAdmin={isSystemAdmin || profile?.role === 'Admin'}><Settings profile={profile} /></AdminRoute>} />
+                    <Route path="/profile" element={<ProfilePage profile={profile} />} />
+                    <Route path="*" element={<Navigate to="/" />} />
+                  </Routes>
+                </ErrorBoundary>
               </div>
               
               {showShortcutsHelp && (

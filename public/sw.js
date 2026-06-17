@@ -1,35 +1,39 @@
-const CACHE_NAME = 'crm-cache-v1';
+const CACHE_NAME = 'crm-cache-v2';
 const OFFLINE_URL = '/index.html';
 
-// Critical assets to cache on install
+// Critical static assets to cache immediately upon service worker installation
 const PRECACHE_ASSETS = [
     '/',
     '/index.html',
     '/logo.svg',
     '/logo.png',
-    '/robots.txt'
+    '/robots.txt',
+    '/manifest.json'
 ];
 
-// Perform install & precaching
+// Perform install & cache core shells
 self.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(CACHE_NAME)
             .then((cache) => {
-                console.log('[Service Worker] Pre-caching critical assets');
-                return cache.addAll(PRECACHE_ASSETS);
+                console.log('[Service Worker] Precaching app shell and core assets');
+                // Ensure failures during caching do not prevent service worker deployment
+                return cache.addAll(PRECACHE_ASSETS).catch((err) => {
+                    console.error('[Service Worker] Pre-caching partial failure, continuing registration:', err.message);
+                });
             })
             .then(() => self.skipWaiting())
     );
 });
 
-// Activate & clean up outdated caches
+// Activate and clean up obsolete caches instantly
 self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys().then((cacheNames) => {
             return Promise.all(
                 cacheNames.map((cache) => {
                     if (cache !== CACHE_NAME) {
-                        console.log('[Service Worker] Deleting outdated cache:', cache);
+                        console.log('[Service Worker] Purging stale obsolete cache:', cache);
                         return caches.delete(cache);
                     }
                 })
@@ -38,35 +42,62 @@ self.addEventListener('activate', (event) => {
     );
 });
 
-// Helper to check if request is a static asset or document
-function isStaticAsset(url) {
-    const pathname = url.pathname;
-    return (
-        pathname.includes('.') && 
-        !pathname.startsWith('/api') && 
-        !pathname.includes('chrome-extension')
-    );
-}
-
-// Fetch routing strategies:
-// 1. Documents & API: Network-First (with immediate cache fallback)
-// 2. Static Assets: Stale-While-Revalidate (load from cache instantly, update cache in background)
+// Cache strategy router:
+// 1. App Shell and Navigation: Network-First falling back to index.html (SPA routing shell)
+// 2. API Routes: Network-First falling back to offline fallback warning message
+// 3. Static Assets & Fonts: Stale-While-Revalidate with dynamic updates
 self.addEventListener('fetch', (event) => {
-    // Skip non-GET requests, Chrome extensions, or hot module updates
-    if (event.request.method !== 'GET' || event.request.url.startsWith('chrome-extension://') || event.request.url.includes('hot-update')) {
+    // Only handle GET requests
+    if (event.request.method !== 'GET') {
         return;
     }
 
     const requestUrl = new URL(event.request.url);
 
-    // Strategy 1: Network-First (API calls and navigations)
-    if (requestUrl.pathname.startsWith('/api') || event.request.mode === 'navigate') {
+    // Safeguard check: Ignore chrome extensions, non-http, and live HMR web socket updates
+    if (!requestUrl.protocol.startsWith('http') || requestUrl.pathname.includes('hot-update') || requestUrl.hostname === 'localhost' && requestUrl.port === '3001') {
+        return;
+    }
+
+    // Is it an API route?
+    const isApiRoute = requestUrl.pathname.startsWith('/api/');
+    // Is it a document navigation?
+    const isNavigation = event.request.mode === 'navigate';
+    // Is it booking list or analytics dashboard related (/api/bookings)?
+    const isBookingOrAnalyticsApi = requestUrl.pathname.startsWith('/api/bookings');
+
+    if (isBookingOrAnalyticsApi) {
+        // Strategy: Stale-While-Revalidate specifically for booking list & analytics dashboard
+        event.respondWith(
+            caches.match(event.request).then((cachedResponse) => {
+                const fetchPromise = fetch(event.request).then((networkResponse) => {
+                    if (networkResponse && (networkResponse.status === 200 || networkResponse.status === 304)) {
+                        const responseToCache = networkResponse.clone();
+                        caches.open(CACHE_NAME).then((cache) => {
+                            cache.put(event.request, responseToCache);
+                        });
+                    }
+                    return networkResponse;
+                }).catch((err) => {
+                    console.warn('[Service Worker] Background SWR fetch failed for:', requestUrl.pathname, err.message);
+                });
+
+                if (cachedResponse) {
+                    // Instantly serve cached, while background fetch updates the cache
+                    return cachedResponse;
+                }
+
+                // If not cached, wait for network
+                return fetchPromise;
+            })
+        );
+    } else if (isApiRoute || isNavigation) {
+        // Strategy: Network-First
         event.respondWith(
             fetch(event.request)
                 .then((response) => {
-                    // Check if we received a valid response
-                    if (response && response.status === 200 && response.type === 'basic') {
-                        // Cache a copy of the fresh API page / document
+                    // Only cache successful standard requests
+                    if (response && response.status === 200) {
                         const responseToCache = response.clone();
                         caches.open(CACHE_NAME).then((cache) => {
                             cache.put(event.request, responseToCache);
@@ -74,19 +105,26 @@ self.addEventListener('fetch', (event) => {
                     }
                     return response;
                 })
-                .catch(() => {
-                    console.log('[Service Worker] Fetch failed, returning cached fallback for:', requestUrl.pathname);
+                .catch((error) => {
+                    console.warn('[Service Worker] Network offline. Serving fallback cache for:', requestUrl.pathname);
+                    
                     return caches.match(event.request).then((cachedResponse) => {
                         if (cachedResponse) {
                             return cachedResponse;
                         }
-                        // Fallback to offline entry HTML if it's a page navigation
-                        if (event.request.mode === 'navigate') {
+
+                        // For navigation queries, return index.html to allow SPA client routes to work
+                        if (isNavigation) {
                             return caches.match(OFFLINE_URL);
                         }
-                        // Return offline error response for api calls when offline
+
+                        // For API queries, return standard json warning
                         return new Response(
-                            JSON.stringify({ error: "Offline: Intermittent connectivity detected." }), 
+                            JSON.stringify({ 
+                                success: false, 
+                                offline: true, 
+                                message: "The CRM is running in native offline mode. Network connection is required for this action." 
+                            }), 
                             { 
                                 status: 503, 
                                 headers: { 'Content-Type': 'application/json' } 
@@ -96,23 +134,23 @@ self.addEventListener('fetch', (event) => {
                 })
         );
     } else {
-        // Strategy 2: Stale-While-Revalidate (Assets, CSS, Bundles, Images)
+        // Strategy: Stale-While-Revalidate (Asset caching)
         event.respondWith(
             caches.match(event.request).then((cachedResponse) => {
                 if (cachedResponse) {
-                    // Fetch fresh resource in background & update cache
+                    // Fetch fresh resource in background & update cache dynamically
                     fetch(event.request).then((networkResponse) => {
                         if (networkResponse && networkResponse.status === 200) {
                             caches.open(CACHE_NAME).then((cache) => {
                                 cache.put(event.request, networkResponse);
                             });
                         }
-                    }).catch(() => {/* Ignore background sync failures */});
+                    }).catch(() => { /* offline background updates fail silently */ });
                     
                     return cachedResponse;
                 }
 
-                // If not cached, fetch from network and cache for next time
+                // Not in cache: fetch and store
                 return fetch(event.request).then((networkResponse) => {
                     if (networkResponse && networkResponse.status === 200 && (networkResponse.type === 'basic' || networkResponse.type === 'cors')) {
                         const responseToCache = networkResponse.clone();
@@ -122,13 +160,14 @@ self.addEventListener('fetch', (event) => {
                     }
                     return networkResponse;
                 }).catch(() => {
-                    // Fallback to placeholder image or general resource
+                    // Default image offline placeholders
                     if (event.request.destination === 'image') {
                         return new Response(
-                            '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>', 
+                            '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>', 
                             { headers: { 'Content-Type': 'image/svg+xml' } }
                         );
                     }
+                    return new Response('Network Connection offline.', { status: 404, statusText: 'Offline' });
                 });
             })
         );

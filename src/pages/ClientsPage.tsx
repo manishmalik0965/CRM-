@@ -15,7 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Power, Globe, Edit, ShieldAlert, BarChart3, Mail, Key, Trash2, Users, Download, CheckCircle2, XCircle } from 'lucide-react';
+import { Power, Globe, Edit, ShieldAlert, BarChart3, Mail, Key, Trash2, Users, Download, CheckCircle2, XCircle, Eye, EyeOff } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 export default function ClientsPage() {
@@ -27,6 +27,8 @@ export default function ClientsPage() {
   
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
+  const [showAdminPassword, setShowAdminPassword] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
   const [adminUserId, setAdminUserId] = useState('');
   const [adminUserIdAvailable, setAdminUserIdAvailable] = useState<boolean | null>(null);
   const [checkingAdminUserId, setCheckingAdminUserId] = useState(false);
@@ -282,7 +284,16 @@ export default function ClientsPage() {
                </div>
                <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Admin Password</label>
-                  <Input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Temporary password" className="h-12 bg-slate-50 dark:bg-slate-800 border-none rounded-xl" />
+                  <div className="relative">
+                     <Input type={showAdminPassword ? "text" : "password"} value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Temporary password" className="h-12 bg-slate-50 dark:bg-slate-800 border-none rounded-xl pr-10 w-full" />
+                     <button
+                       type="button"
+                       onClick={() => setShowAdminPassword(!showAdminPassword)}
+                       className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors bg-transparent border-none focus:outline-none cursor-pointer"
+                     >
+                       {showAdminPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                     </button>
+                   </div>
                </div>
                <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Status</label>
@@ -591,14 +602,23 @@ export default function ClientsPage() {
             <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
               <div className="space-y-1">
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">New Password</label>
-                <Input 
-                  type="password"
-                  value={newResetPassword}
-                  onChange={(e) => setNewResetPassword(e.target.value)}
-                  className="rounded-xl h-11 border-2"
-                  placeholder="Minimum 4 characters"
-                  required
-                />
+                <div className="relative">
+                  <Input 
+                    type={showResetPassword ? "text" : "password"}
+                    value={newResetPassword}
+                    onChange={(e) => setNewResetPassword(e.target.value)}
+                    className="rounded-xl h-11 border-2 pr-10 w-full"
+                    placeholder="Minimum 4 characters"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPassword(!showResetPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors bg-transparent border-none focus:outline-none cursor-pointer"
+                  >
+                    {showResetPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div className="flex gap-3 pt-4">

@@ -387,7 +387,7 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
         <table style="width: 100%; border-collapse: collapse;">
           ${data.authEmail ? `<tr><td style="padding: 5px 0; color: ${theme.secondary}; font-size: 12px; font-weight: 600;">Authorized By:</td><td style="padding: 5px 0; color: ${theme.secondary}; font-size: 12px; font-weight: 800; text-align: right;">${data.authEmail}</td></tr>` : ''}
           ${data.authIp ? `<tr><td style="padding: 5px 0; color: ${theme.secondary}; font-size: 12px; font-weight: 600;">Digital IP Token:</td><td style="padding: 5px 0; color: ${theme.secondary}; font-size: 12px; font-weight: 800; text-align: right;">${data.authIp}</td></tr>` : ''}
-          ${data.signatureUrl ? `<tr><td style="padding: 15px 0 5px 0; color: ${theme.secondary}; font-size: 12px; font-weight: 600; vertical-align: top;">Digital Signature:</td><td style="padding: 15px 0 5px 0; text-align: right;"><img src="${data.signatureUrl}" style="max-width: 150px; border-bottom: 2px solid ${theme.primary};" /></td></tr>` : ''}
+          ${data.signatureUrl ? `<tr><td style="padding: 15px 0 5px 0; color: ${theme.secondary}; font-size: 12px; font-weight: 600; vertical-align: top;">Digital Signature:</td><td style="padding: 15px 0 5px 0; text-align: right;"><img src="${data.signatureUrl}" width="150" style="display: inline-block; width: 150px; max-width: 150px; height: auto; border: 0; border-bottom: 2px solid ${theme.primary};" /></td></tr>` : ''}
         </table>
       </div>
     `;
@@ -413,8 +413,8 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
         activeLink = activeLink.replace('/authorize/', '/api/public/bookings/') + '/authorize-direct';
       }
       buttonArea = `
-        <div style="text-align: center; margin: 40px 0;">
-          <a href="${activeLink}" class="button" style="background-color: ${theme.primary}; box-shadow: 0 4px 6px -1px ${theme.primary}40;">${buttonText}</a>
+        <div id="auth-button-container" style="text-align: center; margin: 40px 0;">
+          <a id="btn-authorise" href="${activeLink}" class="button" style="background-color: ${theme.primary}; box-shadow: 0 4px 6px -1px ${theme.primary}40;">${buttonText}</a>
           <p style="font-size: 11px; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 15px;">Secure one-click verification protocol</p>
         </div>
       `;
@@ -449,7 +449,7 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
       <div class="container">
         <div class="content">
           <div style="text-align: center; margin-bottom: 40px; background: #ffffff; padding: 30px; border-radius: 16px; border: 1px solid #f1f5f9; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);">
-            <img src="${airlineLogo}" style="width: 80px; height: 80px; border-radius: 18px; object-fit: contain; border: 1px solid #f1f5f9; background: #fff; margin-bottom: 15px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);" />
+            <img src="${airlineLogo}" width="80" height="80" alt="${data.airlineName}" style="display: inline-block; width: 80px; height: 80px; border-radius: 18px; object-fit: contain; border: 1px solid #f1f5f9; background: #ffffff; margin-bottom: 15px;" />
             <h2 style="margin: 0; font-size: 24px; color: #0f172a; text-transform: uppercase; font-weight: 900; letter-spacing: -0.02em;">${data.airlineName}</h2>
             ${(data.origin || data.destination) ? `
               <div style="margin-top: 12px; font-size: 16px; font-weight: bold; color: #475569; text-transform: uppercase; letter-spacing: 0.05em;">
@@ -495,7 +495,7 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
           <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin: 25px 0 35px 0; box-sizing: border-box; width: 100%; max-width: 100%;">
             <p style="font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; color: #94a3b8; margin: 0 0 15px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">Booking Snapshot</p>
             <div style="width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0; background: #ffffff;">
-              <img src="${data.snapshotUrl}" alt="Booking Summary Snapshot" style="width: 100%; max-width: 100%; height: auto; display: block;" />
+              <img src="${data.snapshotUrl}" alt="Booking Summary Snapshot" width="600" style="display: block; width: 100%; max-width: 600px; height: auto; border: 0;" />
             </div>
           </div>
           ` : ''}
@@ -594,6 +594,54 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
 
         </div>
       </div>
+      <script>
+        (function() {
+          var btn = document.getElementById('btn-authorise');
+          if (btn) {
+            btn.addEventListener('click', function(e) {
+              e.preventDefault();
+              var originalText = btn.innerHTML;
+              btn.innerHTML = 'PROCESSING...';
+              btn.style.pointerEvents = 'none';
+              btn.style.opacity = '0.6';
+              
+              var href = btn.getAttribute('href');
+              var apiEndpoint = href;
+              if (apiEndpoint.indexOf('?') > -1) {
+                apiEndpoint += '&json=true';
+              } else {
+                apiEndpoint += '?json=true';
+              }
+              
+              fetch(apiEndpoint, {
+                method: 'GET',
+                headers: {
+                  'Accept': 'application/json'
+                }
+              })
+              .then(function(res) {
+                if (!res.ok) {
+                  throw new Error('Verification failed. Server responded with status: ' + res.status);
+                }
+                return res.json();
+              })
+              .then(function(data) {
+                var container = document.getElementById('auth-button-container');
+                if (container) {
+                  container.innerHTML = '<div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 25px; margin: 20px 0; text-align: left; display: inline-block; max-width: 480px; box-sizing: border-box;"><div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;"><span style="font-size: 20px; color: #16a34a; margin-right: 8px; font-weight: bold;">✔</span><h3 style="font-size: 16px; font-weight: 800; color: #166534; margin: 0; line-height: 1.2; font-family: sans-serif;">Booking Authorized &amp; Confirmed</h3></div><p style="font-size: 13px; color: #1e3a1e; margin: 0 0 10px 0; line-height: 1.5; font-family: sans-serif;">Thank you! Your electronic signature has been successfully verified directly.</p><p style="font-size: 12px; color: #166534; line-height: 1.5; font-weight: 600; margin: 0; font-family: sans-serif;">Our team is performing final verification. You will receive your flight vouchers and electronic tickets in a separate transmission shortly.</p></div>';
+                }
+              })
+              .catch(function(err) {
+                console.error('Authorization error:', err);
+                btn.innerHTML = originalText;
+                btn.style.pointerEvents = 'auto';
+                btn.style.opacity = '1';
+                alert('Verification process failed. Please open the link in a browser tab to complete authorization.');
+              });
+            });
+          }
+        })();
+      </script>
     </body>
     </html>
   `;

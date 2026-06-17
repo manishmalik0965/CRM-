@@ -39,6 +39,7 @@ import { Plane, Trash2, Plus, UserPlus, Clipboard, CreditCard, DollarSign, Conta
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { generateAuthEmail, generateCancelEmail, generateChangesEmail, generateRefundEmail } from '@/lib/emailTemplates';
+import { generateBookingConfirmation } from '@/lib/pdfGenerator';
 
 
 // We removed static airport data as per user instructions
@@ -496,6 +497,46 @@ export default function CreateBooking({ profile }: { profile: any }) {
     }
   };
 
+  const handleDownloadStructuredReport = () => {
+    try {
+      const branding = settings ? {
+        organizationName: settings.organizationName,
+        supportPhone: settings.supportPhone,
+        supportEmail: settings.supportEmail,
+        logoUrl: settings.logoUrl,
+        fullAddress: settings.fullAddress,
+        primaryColor: settings.primaryColor
+      } : undefined;
+
+      const bookingObj = {
+        crmId: crmId || id || 'Draft',
+        airlineName: airlineName || 'Unknown Airline',
+        pnr: pnr || '---',
+        origin: origin || '---',
+        destination: destination || '---',
+        tripType: tripType || 'One-Way',
+        departureDate: departureDate || '---',
+        arrivalDate: arrivalDate || '---',
+        cabinClass: cabinClass || 'Economy',
+        currency: pricing.currency || 'USD',
+        airlineCharges: pricing.airline || 0,
+        serviceFee: pricing.service || 0,
+        totalAmount: pricing.total || 0,
+        status: bookingStatus || 'pending',
+        signatureData: signatureData,
+        cardHolder: payment.ccName || contact.email || 'Valued Customer',
+        contactEmail: contact.email,
+        contactPhone: contact.phone,
+      };
+
+      generateBookingConfirmation(bookingObj, passengers, branding);
+      toast.success('Structured PDF report downloaded successfully');
+    } catch (err) {
+      console.error("Structured report generation failed:", err);
+      toast.error('Failed to generate structured PDF report');
+    }
+  };
+
   const handleFinalize = async () => {
     if (!airlineName) { toast.error('Carrier name is required'); return; }
     if (!contact.email) { toast.error('Customer email is required'); return; }
@@ -699,13 +740,18 @@ export default function CreateBooking({ profile }: { profile: any }) {
           if (scrollContainer) { (scrollContainer as any).style.overflow = 'visible'; (scrollContainer as any).style.height = 'auto'; (scrollContainer as any).style.maxHeight = 'none'; }
 
           const dataUrl = await toJpeg(el, { quality: 0.6, backgroundColor: '#ffffff', pixelRatio: 1.5, skipFonts: true });
-          const imageBlob = await toBlob(el, { quality: 0.6, backgroundColor: '#ffffff', pixelRatio: 1.5, skipFonts: true });
 
-          if (imageBlob) {
+          if (dataUrl) {
             try {
-              const fd = new FormData(); fd.append('snapshot', imageBlob);
-              const upRes = await fetch('/api/upload-snapshot', { method: 'POST', body: fd });
-              if (upRes.ok) { const uploadData = await upRes.json(); snapshotUrl = uploadData.url; }
+              const upRes = await fetch('/api/upload-snapshot', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ base64: dataUrl })
+              });
+              if (upRes.ok) {
+                const uploadData = await upRes.json();
+                snapshotUrl = uploadData.relativeUrl || uploadData.url;
+              }
             } catch (upErr) {}
           }
           
@@ -2045,9 +2091,19 @@ export default function CreateBooking({ profile }: { profile: any }) {
               variant="outline"
               size="sm"
               onClick={handleDownloadPdf}
-              className="h-8 px-3 text-[10px] font-black uppercase tracking-widest bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+              className="h-8 px-3 text-[10px] font-black uppercase tracking-widest bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 animate-fade-in"
+              title="Generate a screen capture rendering PDF"
             >
-              <Download className="w-3 h-3 mr-2" /> PDF
+              <Download className="w-3 h-3 mr-2" /> PDF Screen
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownloadStructuredReport}
+              className="h-8 px-3 ml-2 text-[10px] font-black uppercase tracking-widest bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 text-white dark:text-slate-100 border-0 shadow-sm"
+              title="Generate a structured transactional PDF report"
+            >
+              <FileText className="w-3 h-3 mr-2" /> Report PDF
             </Button>
           </div>
 

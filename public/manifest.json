@@ -1,0 +1,55 @@
+{
+  "name": "Secure Auth CRM Portal",
+  "short_name": "CRM Portal",
+  "description": "Premium airline reservation, travel authorization, and payment processing CRM.",
+  "id": "/?source=pwa",
+  "start_url": "/?source=pwa",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "display": "standalone",
+  "orientation": "any",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/logo.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/logo.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    }
+  ],
+  "categories": ["business", "finance", "productivity"],
+  "shortcuts": [
+    {
+      "name": "All Bookings",
+      "short_name": "Bookings",
+      "description": "View and manage all travel bookings",
+      "url": "/bookings",
+      "icons": [{ "src": "/logo.png", "sizes": "512x512" }]
+    },
+    {
+      "name": "Create Booking",
+      "short_name": "Create",
+      "description": "Create a new flight or travel booking",
+      "url": "/bookings/new",
+      "icons": [{ "src": "/logo.png", "sizes": "512x512" }]
+    }
+  ]
+}

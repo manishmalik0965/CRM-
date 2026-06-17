@@ -4,6 +4,10 @@ import {BrowserRouter} from 'react-router-dom';
 import App from './App.tsx';
 import './index.css';
 import { AuthProvider } from './context/AuthContext';
+import { initializeErrorLogging } from './lib/logger';
+
+// Initialize centralized error logging for capturing client-side runtime errors
+initializeErrorLogging();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

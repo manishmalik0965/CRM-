@@ -31,3 +31,31 @@ api.interceptors.request.use((config) => {
     }
     return config;
 });
+
+// Response interceptor to intercept failed API responses and log them to the backend /api/logs
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        const config = error.config;
+        if (config && typeof config.url === 'string' && !config.url.includes('/logs')) {
+            // Import dynamically or use dynamic dispatch to avoid circular dependency
+            import('./logger').then(({ logToServer }) => {
+                logToServer({
+                    message: error.message || 'API request failed',
+                    stack: error.stack,
+                    url: config.url || '',
+                    method: config.method || 'GET',
+                    status: error.response?.status,
+                    responseText: error.response?.data ? JSON.stringify(error.response.data) : '',
+                    type: 'api',
+                    error: {
+                        code: error.code,
+                        statusText: error.response?.statusText
+                    }
+                });
+            }).catch(() => {});
+        }
+        return Promise.reject(error);
+    }
+);
+

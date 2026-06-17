@@ -638,7 +638,7 @@ export default function Dashboard() {
         </Card>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 mt-10">
-        {(user?.role === 'Admin' || user?.role === 'Manager' || user?.role === 'HOD') && (
+        {(user?.role === 'Admin' || user?.role === 'Manager' || user?.role === 'HOD' || user?.role === 'WFM') && (
           <Card className="lg:col-span-3 border-slate-200 dark:border-slate-800 border-2 rounded-[2.5rem] overflow-hidden shadow-none bg-white dark:bg-slate-900">
             <CardHeader className="border-b border-slate-50 dark:border-slate-800/50 py-8 px-10">
               <div className="space-y-1">

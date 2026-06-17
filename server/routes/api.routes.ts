@@ -258,6 +258,72 @@ router.post('/audit-logs', requireAuth, async (req, res) => {
     }
 });
 
+// Centralized logging endpoint to capture client-side runtime errors and failed API responses
+router.post('/logs', async (req, res) => {
+    try {
+        const { message, stack, url, method, status, responseText, type, userAgent, error } = req.body;
+        
+        let companyId = 'legacy-tenant-1';
+        let userId = 'default-admin-1';
+        
+        // Try to decode JWT from Authorization header if present
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            try {
+                const token = authHeader.split(' ')[1];
+                const decoded = jwt.verify(token, JWT_SECRET) as any;
+                if (decoded?.company_id || decoded?.companyId) {
+                    companyId = decoded.company_id || decoded.companyId;
+                }
+                if (decoded?.id) {
+                    userId = decoded.id;
+                }
+            } catch (e) {
+                // Ignore decoding errors
+            }
+        }
+        
+        // Validate that user exists in DB before inserting
+        const [userExists]: any = await db.query('SELECT id FROM users WHERE id = ? LIMIT 1', [userId]);
+        if (userExists.length === 0) {
+            const [companyUser]: any = await db.query('SELECT id FROM users WHERE company_id = ? LIMIT 1', [companyId]);
+            if (companyUser.length > 0) {
+                userId = companyUser[0].id;
+            } else {
+                const [anyUser]: any = await db.query('SELECT id FROM users LIMIT 1');
+                if (anyUser.length > 0) {
+                    userId = anyUser[0].id;
+                }
+            }
+        }
+
+        const id = uuidv4();
+        const action = type === 'api' ? 'Failed API Response' : 'Client Runtime Error';
+        const detailsJson = JSON.stringify({
+            message,
+            stack,
+            url,
+            method,
+            status,
+            responseText,
+            userAgent: userAgent || req.headers['user-agent'],
+            error,
+            preciseTimestamp: new Date().toISOString()
+        });
+        const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'Unknown';
+
+        await db.query(
+            'INSERT INTO activity_logs (id, company_id, user_id, action, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+            [id, companyId, userId, action, detailsJson, ipAddress]
+        );
+
+        res.json({ success: true, logId: id });
+    } catch (err: any) {
+        console.error('Error in POST /api/logs:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 const DEFAULT_SETTINGS = {
     organizationName: 'BLACKGRASS CRM',
     primaryColor: '#0f172a',
@@ -911,6 +977,9 @@ router.get('/public/bookings/:id/authorize-direct', async (req, res) => {
         }
 
         if (rows.length === 0) {
+            if (req.query.json === 'true' || req.headers.accept?.includes('application/json')) {
+                return res.status(404).json({ success: false, message: 'Booking Not Found' });
+            }
             return res.status(404).send(`
                 <html>
                     <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #f8fafc; color: #0f172a;">
@@ -1209,6 +1278,15 @@ router.get('/public/bookings/:id/authorize-direct', async (req, res) => {
             console.warn(`[Auto-Authorization Router] SMTP Profile not found or configured. Did not send receipt email.`);
         }
 
+        if (req.query.json === 'true' || req.headers.accept?.includes('application/json')) {
+            return res.json({
+                success: true,
+                message: 'Booking Authorized & Confirmed',
+                crmId: tb.crmId,
+                pnr: tb.pnr
+            });
+        }
+
         // Return a clean self-closing HTML success screen to close the tab and stay transparently in-background
         const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
         res.setHeader('Content-Type', 'text/html');
@@ -1417,6 +1495,9 @@ router.get('/public/bookings/:id/authorize-direct', async (req, res) => {
         `);
     } catch (e: any) {
         console.error('[GET /public/bookings/:id/authorize-direct] CRITICAL FAIL:', e.message);
+        if (req.query.json === 'true' || req.headers.accept?.includes('application/json')) {
+            return res.status(500).json({ success: false, message: e.message });
+        }
         res.status(500).send(`
             <html>
                 <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #fff1f2; color: #991b1b;">

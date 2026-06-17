@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
-import { Plane, ShieldCheck, Lock, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Plane, ShieldCheck, Lock, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 import confetti from 'canvas-confetti';
 import { toJpeg } from 'html-to-image';
@@ -521,7 +521,14 @@ export default function AuthorizationPage() {
                                 setLoading(false);
                             }
                         }}>
-                            {loading ? 'Processing...' : 'I AUTHORIZE'}
+                            {loading ? (
+                                <span className="flex items-center justify-center gap-2">
+                                    <Loader2 className="w-5 h-5 animate-spin" />
+                                    <span>PROCESSING AUTHORIZATION...</span>
+                                </span>
+                            ) : (
+                                'I AUTHORIZE'
+                            )}
                         </Button>
                     </CardFooter>
                 )}
