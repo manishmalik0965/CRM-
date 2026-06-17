@@ -54,6 +54,33 @@ function processAttachmentsAndRichText(attachmentsList: any[] | undefined, packa
   return { finalAttachments, processedRichText, snapshotUrl };
 }
 
+async function persistSenderInfo(bookingId: string | undefined, fromEmail: string | undefined, fromLabel: string | undefined) {
+  if (!bookingId || !fromEmail) return;
+  try {
+    const [rows]: any = await db.query('SELECT * FROM bookings WHERE id = ?', [bookingId]);
+    if (rows.length > 0) {
+      const bookingRow = rows[0];
+      let existingDetails: any = {};
+      if (bookingRow.details) {
+        try {
+          existingDetails = typeof bookingRow.details === 'string' ? JSON.parse(bookingRow.details) : bookingRow.details;
+        } catch (e) {}
+      }
+      const updatedDetails = {
+        ...existingDetails,
+        fromEmail: fromEmail || existingDetails.fromEmail || '',
+        fromLabel: fromLabel || existingDetails.fromLabel || '',
+        sentFromEmail: fromEmail || existingDetails.sentFromEmail || '',
+        sentFromLabel: fromLabel || existingDetails.sentFromLabel || '',
+      };
+      await db.query('UPDATE bookings SET details = ? WHERE id = ?', [JSON.stringify(updatedDetails), bookingId]);
+      console.log(`[persistSenderInfo] Saved sentFromEmail (${fromEmail}) to booking ${bookingId}`);
+    }
+  } catch (dbErr: any) {
+    console.error('[persistSenderInfo] DB update failed:', dbErr.message);
+  }
+}
+
 function formatIcsDate(date: Date): string {
   const yyyy = date.getUTCFullYear();
   const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
@@ -520,10 +547,16 @@ const getAirlineDomainAsync = async (name: string) => {
       snapshotBase64,
       attachments: attachmentsList,
       cardLast4,
-      cardHolderName
+      cardHolderName,
+      cardBrand
     } = req.body;
 
-    const authLink = `${appUrl || 'http://localhost:3000'}/authorize/${bookingId}`;
+    await persistSenderInfo(bookingId, fromEmail, fromLabel);
+
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const reqUrl = `${proto}://${req.get('host')}`;
+    const currentAppUrl = appUrl || reqUrl;
+    const authLink = `${currentAppUrl}/authorize/${bookingId}`;
     
     const { finalAttachments, processedRichText, snapshotUrl } = processAttachmentsAndRichText(attachmentsList, packageRichText, snapshotBase64, bookingId);
     
@@ -556,6 +589,7 @@ const getAirlineDomainAsync = async (name: string) => {
       passengerName: passengerName || 'Valued Customer',
       cardHolderName: cardHolderName || passengerName || 'Valued Customer',
       cardLast4: cardLast4 || '',
+      cardBrand: cardBrand || '',
       totalAmount,
       currency,
       authLink,
@@ -594,7 +628,8 @@ const getAirlineDomainAsync = async (name: string) => {
           auth: {
             user: profile.email,
             pass: cleanPassword
-          }
+          },
+          tls: { rejectUnauthorized: false }
         });
 
         await transporter.sendMail({
@@ -770,7 +805,8 @@ const getAirlineDomainAsync = async (name: string) => {
           auth: {
             user: profile.email,
             pass: cleanPassword
-          }
+          },
+          tls: { rejectUnauthorized: false }
         });
 
         await transporter.sendMail({
@@ -817,14 +853,19 @@ const getAirlineDomainAsync = async (name: string) => {
   });
 
   app.post("/api/send-refund-email", async (req, res) => {
-    const { bookingId, appUrl, email, crmId, airlineName, totalAmount, refundQuote, airlineCredits, airlineCharges, serviceFee, currency, pnr, passengerName, branding, fromEmail, fromLabel, packageRichText, snapshotBase64, attachments: attachmentsList, cardLast4, cardHolderName, refundType } = req.body;
+    const { bookingId, appUrl, email, crmId, airlineName, totalAmount, refundQuote, airlineCredits, airlineCharges, serviceFee, currency, pnr, passengerName, branding, fromEmail, fromLabel, packageRichText, snapshotBase64, attachments: attachmentsList, cardLast4, cardHolderName, refundType, cardBrand, passengers } = req.body;
     
     if (!email || !fromEmail) {
       return res.status(400).json({ success: false, message: 'Missing recipient or sender email' });
     }
 
+    await persistSenderInfo(bookingId, fromEmail, fromLabel);
+
     const { generateRefundEmail } = await import('./src/lib/emailTemplates');
-    const authLink = `${appUrl || 'http://localhost:3000'}/authorize/${bookingId}`;
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const reqUrl = `${proto}://${req.get('host')}`;
+    const currentAppUrl = appUrl || reqUrl;
+    const authLink = `${currentAppUrl}/authorize/${bookingId}`;
     
     const { finalAttachments, processedRichText, snapshotUrl } = processAttachmentsAndRichText(attachmentsList, packageRichText, snapshotBase64, bookingId);
 
@@ -847,7 +888,7 @@ const getAirlineDomainAsync = async (name: string) => {
       } catch(e) {}
     }
 
-    const html = generateRefundEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, totalAmount, airlineCharges, serviceFee, refundQuote, airlineCredits, currency, pnr, passengerName, cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || '', branding, authLink, packageRichText: processedRichText, snapshotUrl, refundType });
+    const html = generateRefundEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, totalAmount, airlineCharges, serviceFee, refundQuote, airlineCredits, currency, pnr, passengerName, cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || '', cardBrand: cardBrand || '', branding, authLink, packageRichText: processedRichText, snapshotUrl, refundType, passengers });
 
     const profile = branding?.smtpProfiles?.find((p: any) => p.email === fromEmail);
     if (!profile || !profile.appPassword) {
@@ -859,7 +900,8 @@ const getAirlineDomainAsync = async (name: string) => {
         host: profile.host || 'smtp.gmail.com',
         port: profile.port ? parseInt(profile.port) : 465,
         secure: profile.port == 587 ? false : true,
-        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') }
+        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') },
+        tls: { rejectUnauthorized: false }
       });
       await transporter.sendMail({
         from: `"${fromLabel || profile.label}" <${profile.email}>`,
@@ -875,14 +917,19 @@ const getAirlineDomainAsync = async (name: string) => {
   });
 
   app.post("/api/send-cancel-email", async (req, res) => {
-    const { bookingId, appUrl, email, crmId, airlineName, pnr, passengerName, origin, destination, branding, fromEmail, fromLabel, validatedGateway, packageRichText, snapshotBase64, attachments: attachmentsList, totalAmount, airlineCharges, serviceFee, refundQuote, currency, cardLast4, cardHolderName } = req.body;
+    const { bookingId, appUrl, email, crmId, airlineName, pnr, passengerName, origin, destination, branding, fromEmail, fromLabel, validatedGateway, packageRichText, snapshotBase64, attachments: attachmentsList, totalAmount, airlineCharges, serviceFee, refundQuote, currency, cardLast4, cardHolderName, cardBrand, passengers } = req.body;
     
     if (!email || !fromEmail) {
       return res.status(400).json({ success: false, message: 'Missing recipient or sender email' });
     }
 
+    await persistSenderInfo(bookingId, fromEmail, fromLabel);
+
     const { generateCancelEmail } = await import('./src/lib/emailTemplates');
-    const authLink = `${appUrl || 'http://localhost:3000'}/authorize/${bookingId}`;
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const reqUrl = `${proto}://${req.get('host')}`;
+    const currentAppUrl = appUrl || reqUrl;
+    const authLink = `${currentAppUrl}/authorize/${bookingId}`;
     
     const { finalAttachments, processedRichText, snapshotUrl } = processAttachmentsAndRichText(attachmentsList, packageRichText, snapshotBase64, bookingId);
 
@@ -905,7 +952,7 @@ const getAirlineDomainAsync = async (name: string) => {
       } catch(e) {}
     }
 
-    const html = generateCancelEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, pnr, passengerName, cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || '', origin, destination, branding, authLink, validatedGateway, totalAmount: totalAmount || 0, airlineCharges, serviceFee, currency: currency || 'USD', refundQuote: refundQuote || 0, packageRichText: processedRichText, snapshotUrl });
+    const html = generateCancelEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, pnr, passengerName, cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || '', cardBrand: cardBrand || '', origin, destination, branding, authLink, validatedGateway, totalAmount: totalAmount || 0, airlineCharges, serviceFee, currency: currency || 'USD', refundQuote: refundQuote || 0, packageRichText: processedRichText, snapshotUrl, passengers });
 
     const profile = branding?.smtpProfiles?.find((p: any) => p.email === fromEmail);
     if (!profile || !profile.appPassword) {
@@ -917,7 +964,8 @@ const getAirlineDomainAsync = async (name: string) => {
         host: profile.host || 'smtp.gmail.com',
         port: profile.port ? parseInt(profile.port) : 465,
         secure: profile.port == 587 ? false : true,
-        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') }
+        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') },
+        tls: { rejectUnauthorized: false }
       });
       await transporter.sendMail({
         from: `"${fromLabel || profile.label}" <${profile.email}>`,
@@ -933,14 +981,19 @@ const getAirlineDomainAsync = async (name: string) => {
   });
 
   app.post("/api/send-changes-email", async (req, res) => {
-    const { bookingId, appUrl, email, crmId, airlineName, pnr, oldPnr, modificationDetails, passengerName, origin, destination, branding, fromEmail, fromLabel, validatedGateway, packageRichText, snapshotBase64, attachments: attachmentsList, totalAmount, airlineCharges, serviceFee, refundQuote, currency, cardLast4, cardHolderName } = req.body;
+    const { bookingId, appUrl, email, crmId, airlineName, pnr, oldPnr, modificationDetails, passengerName, origin, destination, branding, fromEmail, fromLabel, validatedGateway, packageRichText, snapshotBase64, attachments: attachmentsList, totalAmount, airlineCharges, serviceFee, refundQuote, currency, cardLast4, cardHolderName, cardBrand, passengers } = req.body;
     
     if (!email || !fromEmail) {
       return res.status(400).json({ success: false, message: 'Missing recipient or sender email' });
     }
 
+    await persistSenderInfo(bookingId, fromEmail, fromLabel);
+
     const { generateChangesEmail } = await import('./src/lib/emailTemplates');
-    const authLink = `${appUrl || 'http://localhost:3000'}/authorize/${bookingId}`;
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const reqUrl = `${proto}://${req.get('host')}`;
+    const currentAppUrl = appUrl || reqUrl;
+    const authLink = `${currentAppUrl}/authorize/${bookingId}`;
     
     const { finalAttachments, processedRichText, snapshotUrl } = processAttachmentsAndRichText(attachmentsList, packageRichText, snapshotBase64, bookingId);
 
@@ -963,7 +1016,7 @@ const getAirlineDomainAsync = async (name: string) => {
       } catch(e) {}
     }
 
-    const html = generateChangesEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, pnr, oldPnr, modificationDetails, passengerName, cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || '', origin, destination, branding, authLink, validatedGateway, totalAmount: totalAmount || 0, airlineCharges, serviceFee, currency: currency || 'USD', refundQuote: refundQuote || 0, packageRichText: processedRichText, snapshotUrl });
+    const html = generateChangesEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, pnr, oldPnr, modificationDetails, passengerName, cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || '', cardBrand: cardBrand || '', origin, destination, branding, authLink, validatedGateway, totalAmount: totalAmount || 0, airlineCharges, serviceFee, currency: currency || 'USD', refundQuote: refundQuote || 0, packageRichText: processedRichText, snapshotUrl, passengers });
 
     const profile = branding?.smtpProfiles?.find((p: any) => p.email === fromEmail);
     if (!profile || !profile.appPassword) {
@@ -975,7 +1028,8 @@ const getAirlineDomainAsync = async (name: string) => {
         host: profile.host || 'smtp.gmail.com',
         port: profile.port ? parseInt(profile.port) : 465,
         secure: profile.port == 587 ? false : true,
-        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') }
+        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') },
+        tls: { rejectUnauthorized: false }
       });
       await transporter.sendMail({
         from: `"${fromLabel || profile.label}" <${profile.email}>`,
@@ -1028,7 +1082,8 @@ const getAirlineDomainAsync = async (name: string) => {
         host: profile.host || 'smtp.gmail.com',
         port: profile.port ? parseInt(profile.port) : 465,
         secure: profile.port == 587 ? false : true,
-        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') }
+        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') },
+        tls: { rejectUnauthorized: false }
       });
       await transporter.sendMail({
         from: `"Secure Auth CRM" <${profile.email}>`,
@@ -1060,7 +1115,8 @@ const getAirlineDomainAsync = async (name: string) => {
         host: profile.host || 'smtp.gmail.com',
         port: profile.port ? parseInt(profile.port) : 465,
         secure: profile.port == 587 ? false : true,
-        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') }
+        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') },
+        tls: { rejectUnauthorized: false }
       });
 
       const html = `
@@ -1109,7 +1165,8 @@ const getAirlineDomainAsync = async (name: string) => {
         host: profile.host || 'smtp.gmail.com',
         port: profile.port ? parseInt(profile.port) : 465,
         secure: profile.port == 587 ? false : true,
-        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') }
+        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') },
+        tls: { rejectUnauthorized: false }
       });
       await transporter.sendMail({
         from: `"Security Alerts" <${profile.email}>`,
@@ -1138,7 +1195,8 @@ const getAirlineDomainAsync = async (name: string) => {
         host: host || 'smtp.gmail.com',
         port: port ? parseInt(port) : 465,
         secure: port == 587 ? false : true,
-        auth: { user: email, pass: cleanPassword }
+        auth: { user: email, pass: cleanPassword },
+        tls: { rejectUnauthorized: false }
       });
 
       // Verify connection configuration

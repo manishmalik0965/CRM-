@@ -35,7 +35,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Users as UsersIcon, Plus, UserX, UserCog, Key, Clock, CheckCircle2, XCircle } from 'lucide-react';
+import { Users as UsersIcon, Plus, UserX, UserCog, Key, Clock, CheckCircle2, XCircle, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 
 
@@ -57,6 +57,7 @@ export default function UsersPage({ profile }: { profile: any }) {
   const [checkingUserId, setCheckingUserId] = useState(false);
   const [role, setRole] = useState('Agent');
   const [password, setPassword] = useState(''); // Only used for creating initially or conceptually
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     if (!userId.trim()) {
@@ -257,10 +258,25 @@ export default function UsersPage({ profile }: { profile: any }) {
                     <option value="WFM" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">WFM</option>
                   </select>
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{editingId ? 'Reset Password (Optional)' : 'Password'}</Label>
-                  <Input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="••••••••" className="rounded-xl bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-800 transition-all" />
-                </div>
+                 <div className="space-y-2">
+                   <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{editingId ? 'Reset Password (Optional)' : 'Password'}</Label>
+                   <div className="relative">
+                     <Input 
+                       value={password} 
+                       onChange={(e) => setPassword(e.target.value)} 
+                       type={showPassword ? "text" : "password"} 
+                       placeholder="••••••••" 
+                       className="rounded-xl bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-800 transition-all pr-10" 
+                     />
+                     <button
+                       type="button"
+                       onClick={() => setShowPassword(!showPassword)}
+                       className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors bg-transparent border-none focus:outline-none cursor-pointer"
+                     >
+                       {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                     </button>
+                   </div>
+                 </div>
                 <Button disabled={checkingUserId || (!editingId && !userId.trim()) || userIdAvailable === false} onClick={handleSave} className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-6 rounded-t-none font-bold uppercase tracking-widest text-xs">
                   {editingId ? 'Update User' : 'Create User'}
                 </Button>

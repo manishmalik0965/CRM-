@@ -8,7 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { UserCog, Shield, QrCode } from 'lucide-react';
+import { UserCog, Shield, QrCode, Eye, EyeOff } from 'lucide-react';
 import QRCode from 'qrcode';
 import { generateSecret, verify, generateURI } from 'otplib';
 
@@ -20,6 +20,7 @@ export default function ProfilePage({ profile }: { profile: any }) {
   const [displayName, setDisplayName] = useState(profile?.username || profile?.displayName || '');
   const [phone, setPhone] = useState(profile?.phone || '');
   const [newPassword, setNewPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [photoURL, setPhotoURL] = useState(profile?.photoURL || '');
   const [loading, setLoading] = useState(false);
   
@@ -191,12 +192,22 @@ export default function ProfilePage({ profile }: { profile: any }) {
 
             <div className="space-y-2">
               <Label className="text-[10px] uppercase font-black tracking-widest text-slate-400">New Password</Label>
-              <Input 
-                type="password"
-                value={newPassword} 
-                onChange={e => setNewPassword(e.target.value)} 
-                placeholder="Leave blank to keep unchanged" 
-              />
+              <div className="relative">
+                <Input 
+                  type={showPassword ? "text" : "password"}
+                  value={newPassword} 
+                  onChange={e => setNewPassword(e.target.value)} 
+                  placeholder="Leave blank to keep unchanged" 
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors bg-transparent border-none focus:outline-none cursor-pointer"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
               <p className="text-[10px] text-slate-500">Requires recent sign-in to change password due to security policy.</p>
             </div>
             

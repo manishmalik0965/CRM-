@@ -22,7 +22,7 @@ export default defineConfig(({mode}) => {
     base: '/',
     build: {
       chunkSizeWarningLimit: 2000,
-      sourcemap: true
+      sourcemap: false
     }
   };
 });

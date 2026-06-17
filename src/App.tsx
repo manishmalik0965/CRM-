@@ -202,6 +202,8 @@ function App() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [readNotifications, setReadNotifications] = useState<string[]>([]);
   const [agentStatus, setAgentStatus] = useState<'Live' | 'Break' | 'Logged Out'>('Live');
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
 
   useEffect(() => {
     if (user?.id) {
@@ -464,6 +466,120 @@ function App() {
   const canCreateBookings = isAgent; // Everyone
   const canSendEmails = isAgent; // Everyone
 
+  // Global Keyboard Shortcuts hook listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check if user is typing in form inputs, textarea, or contentEditable dynamic elements
+      const target = e.target as HTMLElement;
+      if (!target) return;
+      
+      const isInput = 
+        target.tagName === 'INPUT' || 
+        target.tagName === 'TEXTAREA' || 
+        target.hasAttribute('contenteditable') || 
+        target.isContentEditable;
+
+      // Handle Escape globally to dismiss help or search preview
+      if (e.key === 'Escape') {
+        if (showShortcutsHelp) {
+          setShowShortcutsHelp(false);
+          return;
+        }
+        if (document.activeElement === searchInputRef.current) {
+          searchInputRef.current?.blur();
+          setShowPreview(false);
+          return;
+        }
+      }
+
+      // If user is editing/typing inside an input field, do not trigger navigation/global shortcuts
+      if (isInput) return;
+
+      const key = e.key.toLowerCase();
+
+      // Trigger standard shortcuts
+      if (e.key === '/') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        setShowPreview(true);
+        toast.info("Search focused (Press Escape to dismiss)", { id: "search-focus", duration: 1500 });
+        return;
+      }
+
+      if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+        e.preventDefault();
+        setShowShortcutsHelp(prev => !prev);
+        return;
+      }
+
+      switch (key) {
+        case 'n':
+          e.preventDefault();
+          if (canCreateBookings) {
+            navigate('/bookings/new');
+            toast.info("Navigated to New Booking", { id: "kb-nav-new", duration: 1500 });
+          } else {
+            toast.error("You do not have permission to create bookings.");
+          }
+          break;
+        case 'h':
+          e.preventDefault();
+          navigate('/');
+          toast.info("Navigated to Dashboard", { id: "kb-nav-dash", duration: 1500 });
+          break;
+        case 'b':
+          e.preventDefault();
+          navigate('/bookings');
+          toast.info("Navigated to All Bookings", { id: "kb-nav-bookings", duration: 1500 });
+          break;
+        case 'd':
+          e.preventDefault();
+          navigate('/drafts');
+          toast.info("Navigated to Draft Bookings", { id: "kb-nav-drafts", duration: 1500 });
+          break;
+        case 'a':
+          e.preventDefault();
+          navigate('/authorized');
+          toast.info("Navigated to Authorized Bookings", { id: "kb-nav-auth", duration: 1500 });
+          break;
+        case 's':
+          e.preventDefault();
+          if (isAdmin || isSystemAdmin) {
+            navigate('/settings');
+            toast.info("Navigated to Settings", { id: "kb-nav-settings", duration: 1500 });
+          }
+          break;
+        case 'u':
+          e.preventDefault();
+          if (isManager) {
+            navigate('/users');
+            toast.info("Navigated to Manage Users", { id: "kb-nav-users", duration: 1500 });
+          }
+          break;
+        case 't':
+          e.preventDefault();
+          if (isAdmin) {
+            navigate('/templates');
+            toast.info("Navigated to Email Templates", { id: "kb-nav-templates", duration: 1500 });
+          }
+          break;
+        case 'm':
+          // Optional additional navigation shortcut
+          break;
+        case 'k':
+          e.preventDefault();
+          setShowShortcutsHelp(prev => !prev);
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [navigate, isAgent, isManager, isAdmin, isSystemAdmin, canCreateBookings, showShortcutsHelp]);
+
   if (loading) return <div className="h-screen w-screen flex items-center justify-center bg-background text-foreground">Loading Blackgrass CRM...</div>;
 
   return (
@@ -616,8 +732,9 @@ function App() {
                   <form onSubmit={handleGlobalSearch} className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-md px-3 py-1.5 w-64 xl:w-96 transition-colors group focus-within:ring-2 focus-within:ring-blue-500/20">
                     <Search className="w-4 h-4 text-slate-400 mr-2 group-focus-within:text-blue-500 transition-colors" />
                     <input 
+                      ref={searchInputRef}
                       type="text" 
-                      placeholder="Search CRM ID, Passenger, or Email..." 
+                      placeholder="Search CRM ID, Passenger, or Email... (Press / to search)" 
                       className="bg-transparent border-none text-sm w-full outline-none text-slate-600 dark:text-slate-300 font-light"
                       value={searchTerm}
                       onChange={(e) => {
@@ -766,6 +883,15 @@ function App() {
                     </PopoverContent>
                   </Popover>
                   <Separator orientation="vertical" className="h-6 dark:bg-slate-700" />
+                  <button 
+                    onClick={() => setShowShortcutsHelp(true)}
+                    className="text-slate-400 cursor-pointer hover:text-slate-600 dark:hover:text-white transition-colors relative focus:outline-none p-2 rounded-full hover:bg-slate-50 dark:hover:bg-slate-800"
+                    title="Keyboard Shortcuts Guide (Press K or ?)"
+                  >
+                    <Suspense fallback={null}>
+                      <LazyIcon name="Keyboard" className="w-5 h-5" />
+                    </Suspense>
+                  </button>
                   <div className="text-slate-400 cursor-pointer hover:text-slate-600 dark:hover:text-white transition-colors" onClick={() => setDarkMode(!darkMode)}>
                     {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
                   </div>
@@ -828,6 +954,150 @@ function App() {
                 </Routes>
               </div>
               
+              {showShortcutsHelp && (
+                <div 
+                  id="shortcuts-help-modal"
+                  className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
+                  onClick={() => setShowShortcutsHelp(false)}
+                >
+                  <div 
+                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {/* Header */}
+                    <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Suspense fallback={null}>
+                          <LazyIcon name="Keyboard" className="w-5 h-5 text-blue-500" />
+                        </Suspense>
+                        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                          Keyboard Shortcuts
+                        </h3>
+                      </div>
+                      <button 
+                        onClick={() => setShowShortcutsHelp(false)}
+                        className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Content */}
+                    <div className="p-6 space-y-6">
+                      {/* Section: Search & Actions */}
+                      <div className="space-y-3">
+                        <h4 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                          Global Commands
+                        </h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-950/20 rounded-lg border border-slate-100 dark:border-slate-800/60">
+                            <span className="text-xs text-slate-600 dark:text-slate-300">Focus Search</span>
+                            <kbd className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 font-mono text-[10px] font-black text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded shadow-sm">
+                              /
+                            </kbd>
+                          </div>
+                          <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-950/20 rounded-lg border border-slate-100 dark:border-slate-800/60">
+                            <span className="text-xs text-slate-600 dark:text-slate-300">Dismiss / Escape</span>
+                            <kbd className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 font-mono text-[10px] font-black text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded shadow-sm">
+                              ESC
+                            </kbd>
+                          </div>
+                          <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-950/20 rounded-lg border border-slate-100 dark:border-slate-800/60">
+                            <span className="text-xs text-slate-600 dark:text-slate-300">Toggle this guide</span>
+                            <kbd className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 font-mono text-[10px] font-black text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded shadow-sm">
+                              ? or K
+                            </kbd>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Section: Navigation */}
+                      <div className="space-y-3">
+                        <h4 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                          Navigation Shortcuts
+                        </h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-950/20 rounded-lg border border-slate-100 dark:border-slate-800/60">
+                            <span className="text-xs text-slate-600 dark:text-slate-300">Dashboard</span>
+                            <kbd className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 font-mono text-[10px] font-black text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded shadow-sm">
+                              H
+                            </kbd>
+                          </div>
+                          {canCreateBookings && (
+                            <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-950/20 rounded-lg border border-slate-100 dark:border-slate-800/60">
+                              <span className="text-xs text-slate-600 dark:text-slate-300">Create Booking</span>
+                              <kbd className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 font-mono text-[10px] font-black text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded shadow-sm">
+                                N
+                              </kbd>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-950/20 rounded-lg border border-slate-100 dark:border-slate-800/60">
+                            <span className="text-xs text-slate-600 dark:text-slate-300">All Bookings</span>
+                            <kbd className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 font-mono text-[10px] font-black text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded shadow-sm">
+                              B
+                            </kbd>
+                          </div>
+                          <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-950/20 rounded-lg border border-slate-100 dark:border-slate-800/60">
+                            <span className="text-xs text-slate-600 dark:text-slate-300">Drafts</span>
+                            <kbd className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 font-mono text-[10px] font-black text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded shadow-sm">
+                              D
+                            </kbd>
+                          </div>
+                          <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-950/20 rounded-lg border border-slate-100 dark:border-slate-800/60">
+                            <span className="text-xs text-slate-600 dark:text-slate-300">Authorized Bookings</span>
+                            <kbd className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 font-mono text-[10px] font-black text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded shadow-sm">
+                              A
+                            </kbd>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Section: Administration Management */}
+                      {(isManager || isAdmin) && (
+                        <div className="space-y-3">
+                          <h4 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                            Administration
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {isManager && (
+                              <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-950/20 rounded-lg border border-slate-100 dark:border-slate-800/60">
+                                <span className="text-xs text-slate-600 dark:text-slate-300">Manage Users</span>
+                                <kbd className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 font-mono text-[10px] font-black text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded shadow-sm">
+                                  U
+                                </kbd>
+                              </div>
+                            )}
+                            {isAdmin && (
+                              <>
+                                <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-950/20 rounded-lg border border-slate-100 dark:border-slate-800/60">
+                                  <span className="text-xs text-slate-600 dark:text-slate-300">Settings</span>
+                                  <kbd className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 font-mono text-[10px] font-black text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded shadow-sm">
+                                    S
+                                  </kbd>
+                                </div>
+                                <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-950/20 rounded-lg border border-slate-100 dark:border-slate-800/60">
+                                  <span className="text-xs text-slate-600 dark:text-slate-300">Email Templates</span>
+                                  <kbd className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 font-mono text-[10px] font-black text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded shadow-sm">
+                                    T
+                                  </kbd>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Footer */}
+                    <div className="px-6 py-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 text-center">
+                      <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">
+                        Press <span className="font-bold">ESC</span> to dismiss this menu at any time.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <Toaster />
             </main>
           </div>

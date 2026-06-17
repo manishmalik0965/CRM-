@@ -198,7 +198,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
 
 
   const addPassenger = () => {
-    setPassengers([...passengers, { id: Date.now() + Math.random().toString(), name: '', dob: '', gender: 'Male', ptc: 'ADT', ticketNumber: '' }]);
+    setPassengers([...passengers, { id: Date.now() + Math.random().toString(), name: '', dob: '', gender: 'Male', ptc: 'ADT', ticketNumber: '', frequentFlyerNumber: '' }]);
   };
 
   const removePassenger = (id: string) => {
@@ -206,7 +206,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
   };
 
   const updatePassenger = (id: string, field: string, value: string) => {
-    const formattedValue = (field === 'name' || field === 'ticketNumber') ? value.toUpperCase() : value;
+    const formattedValue = (field === 'name' || field === 'ticketNumber' || field === 'frequentFlyerNumber') ? value.toUpperCase() : value;
     setPassengers(passengers.map(p => p.id === id ? { ...p, [field]: formattedValue } : p));
   };
 
@@ -225,7 +225,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
   const [arrivalDate, setArrivalDate] = useState('');
   const [multiCitySegments, setMultiCitySegments] = useState<any[]>([]);
   const [cabinClass, setCabinClass] = useState('Economy');
-  const [passengers, setPassengers] = useState<any[]>([{ id: 'init-1', name: '', dob: '', gender: 'Male', ptc: 'ADT', ticketNumber: '' }]);
+  const [passengers, setPassengers] = useState<any[]>([{ id: 'init-1', name: '', dob: '', gender: 'Male', ptc: 'ADT', ticketNumber: '', frequentFlyerNumber: '' }]);
   const [contact, setContact] = useState({ email: '', phone: '', address: '', city: '', state: '', zip: '', country: '' });
   const [payment, setPayment] = useState({ ccName: '', ccNumber: '', expiry: '', cvv: '' });
   const [pricing, setPricing] = useState({ total: 0, airline: 0, service: 0, currency: 'USD', refundQuote: 0, airlineCredits: 0, refundType: 'original' as 'original' | 'credit' });
@@ -320,7 +320,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
         if (d.passengerDetails && d.passengerDetails.length > 0) {
             setPassengers(d.passengerDetails);
         } else if (d.passengerNames && d.passengerNames.length > 0) {
-            setPassengers(d.passengerNames.map((n: any) => typeof n === 'string' ? { id: Date.now() + Math.random().toString(), name: n, dob: '', gender: 'Male', ptc: 'ADT', ticketNumber: '' } : { dob: '', gender: 'Male', ptc: 'ADT', ticketNumber: '', ...n, id: n.id || Date.now() + Math.random().toString() }));
+            setPassengers(d.passengerNames.map((n: any) => typeof n === 'string' ? { id: Date.now() + Math.random().toString(), name: n, dob: '', gender: 'Male', ptc: 'ADT', ticketNumber: '', frequentFlyerNumber: '' } : { dob: '', gender: 'Male', ptc: 'ADT', ticketNumber: '', frequentFlyerNumber: '', ...n, id: n.id || Date.now() + Math.random().toString() }));
         }
         setContact({
             email: d.contactEmail || '',
@@ -754,7 +754,10 @@ export default function CreateBooking({ profile }: { profile: any }) {
               country: (contact.country || '').toUpperCase()
             }, 
             validatedGateway: (validatedGateway || '').toUpperCase(),
-            cardHolderName: (payment.ccName || passengers[0]?.name || 'Valued Customer').toUpperCase(), cardLast4: payment.ccNumber ? payment.ccNumber.slice(-4) : '', packageRichText, appUrl: window.location.origin, fromEmail: smtpProfile?.email, fromLabel: smtpProfile?.label, branding: settings, snapshotBase64, snapshotUrl,
+            cardHolderName: (payment.ccName || passengers[0]?.name || 'Valued Customer').toUpperCase(), 
+            cardLast4: payment.ccNumber ? payment.ccNumber.slice(-4) : '', 
+            cardBrand: detectBrand(payment.ccNumber) || '',
+            packageRichText, appUrl: window.location.origin, fromEmail: smtpProfile?.email, fromLabel: smtpProfile?.label, branding: settings, snapshotBase64, snapshotUrl,
             oldPackageRichText: '', attachments: []
           })
         });
@@ -801,6 +804,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
       validatedGateway: (validatedGateway || '').toUpperCase(),
       cardHolderName: (payment.ccName || passengers[0]?.name || 'Valued Customer').toUpperCase(),
       cardLast4: payment.ccNumber ? payment.ccNumber.slice(-4) : '',
+      cardBrand: detectBrand(payment.ccNumber) || '',
       packageRichText: isHtmlMode ? sanitizeHtml(packageRichText) : packageRichText,
       snapshotUrl: undefined,
       branding: settings,
@@ -1057,8 +1061,8 @@ export default function CreateBooking({ profile }: { profile: any }) {
                           </Button>
                         )}
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
+                      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+                        <div className="xl:col-span-6">
                           <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 block">Passenger Full Name</label>
                           <input 
                             type="text" 
@@ -1072,54 +1076,68 @@ export default function CreateBooking({ profile }: { profile: any }) {
                             )}
                           />
                         </div>
-                        <div className="grid grid-cols-6 gap-4">
-                          <div className="col-span-2">
-                            <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 block">Date of Birth</label>
-                            <input 
-                              type="date" 
-                              value={p.dob} 
-                              onClick={(e) => { try { e.currentTarget.showPicker(); } catch(err) {} }}
-                              onChange={(e) => updatePassenger(p.id, 'dob', e.target.value)}
-                              readOnly={!canEditSensitive}
-                              className={cn(
-                                "w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-base outline-none bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:border-blue-500 transition-all font-medium",
+                        <div className="xl:col-span-3">
+                          <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 block">Gender</label>
+                          <select 
+                            value={p.gender} 
+                            onChange={(e) => updatePassenger(p.id, 'gender', e.target.value)}
+                            disabled={!canEditSensitive}
+                            className={cn(
+                              "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-bold cursor-pointer",
+                              !canEditSensitive && "bg-slate-50 dark:bg-slate-800/80 text-slate-400 cursor-not-allowed"
+                            )}
+                          >
+                            <option value="Male">MALE</option>
+                            <option value="Female">FEMALE</option>
+                            <option value="Other">OTHER</option>
+                          </select>
+                        </div>
+                        <div className="xl:col-span-3">
+                          <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 block">Passenger Type</label>
+                          <select 
+                            value={p.ptc === 'Adult' ? 'ADT' : (p.ptc || 'ADT')} 
+                            onChange={(e) => updatePassenger(p.id, 'ptc', e.target.value)}
+                            disabled={!canEditSensitive}
+                            className={cn(
+                              "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-bold cursor-pointer",
+                              !canEditSensitive && "bg-slate-50 dark:bg-slate-800/80 text-slate-400 cursor-not-allowed"
+                            )}
+                          >
+                            <option value="ADT">Adult</option>
+                            <option value="CHD">Child (CHD)</option>
+                            <option value="INF">Infant (INF)</option>
+                            <option value="UNMR">Unaccompanied Minor (UNMR)</option>
+                          </select>
+                        </div>
+
+                        {/* Next line of Passenger full name */}
+                        <div className="xl:col-span-6">
+                          <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 block">Date of Birth</label>
+                          <input 
+                            type="date" 
+                            value={p.dob} 
+                            onClick={(e) => { try { e.currentTarget.showPicker(); } catch(err) {} }}
+                            onChange={(e) => updatePassenger(p.id, 'dob', e.target.value)}
+                            readOnly={!canEditSensitive}
+                            className={cn(
+                              "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-bold",
+                              !canEditSensitive && "bg-slate-50 dark:bg-slate-800/80 text-slate-400 cursor-not-allowed"
+                            )}
+                          />
+                        </div>
+                        <div className="xl:col-span-6">
+                          <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 block">Frequent Flyer Number</label>
+                          <input 
+                            type="text" 
+                            placeholder="E.G. AA12903" 
+                            value={p.frequentFlyerNumber || ''} 
+                            onChange={(e) => updatePassenger(p.id, 'frequentFlyerNumber', e.target.value)}
+                            readOnly={!canEditSensitive}
+                            className={cn(
+                                "w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all uppercase font-bold",
                                 !canEditSensitive && "bg-slate-50 dark:bg-slate-800/80 text-slate-400 cursor-not-allowed"
-                              )}
-                            />
-                          </div>
-                          <div className="col-span-2">
-                            <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 block">Gender</label>
-                            <select 
-                              value={p.gender} 
-                              onChange={(e) => updatePassenger(p.id, 'gender', e.target.value)}
-                              disabled={!canEditSensitive}
-                              className={cn(
-                                "w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-base outline-none bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 appearance-none focus:border-blue-500 transition-all font-bold",
-                                !canEditSensitive && "bg-slate-50 dark:bg-slate-800/80 text-slate-400 cursor-not-allowed"
-                              )}
-                            >
-                              <option value="Male">MALE</option>
-                              <option value="Female">FEMALE</option>
-                              <option value="Other">OTHER</option>
-                            </select>
-                          </div>
-                          <div className="col-span-2">
-                            <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 block">Passenger Type</label>
-                            <select 
-                              value={p.ptc || 'Adult'} 
-                              onChange={(e) => updatePassenger(p.id, 'ptc', e.target.value)}
-                              disabled={!canEditSensitive}
-                              className={cn(
-                                "w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-base outline-none bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 appearance-none focus:border-blue-500 transition-all font-bold",
-                                !canEditSensitive && "bg-slate-50 dark:bg-slate-800/80 text-slate-400 cursor-not-allowed"
-                              )}
-                            >
-                              <option value="Adult">Adult</option>
-                              <option value="CHD">Child (CHD)</option>
-                              <option value="INF">Infant (INF)</option>
-                              <option value="UNMR">Unaccompanied Minor (UNMR)</option>
-                            </select>
-                          </div>
+                            )}
+                          />
                         </div>
                       </div>
                     </div>
@@ -1153,9 +1171,14 @@ export default function CreateBooking({ profile }: { profile: any }) {
                         <tr key={p.id} className="border-t border-slate-50 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
                           <td className="p-4 text-xs text-slate-400 dark:text-slate-500 font-mono italic">{i + 1}</td>
                           <td className="p-4 text-xs font-bold text-slate-800 dark:text-slate-100 tracking-tight uppercase">
-                            <span className="flex items-center gap-2">
+                            <span className="flex items-center gap-1.5 flex-wrap">
                               {p.name || 'UNSPECIFIED'} 
-                              <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded font-black text-[9px] text-slate-500">{p.ptc || 'Adult'}</span>
+                              <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded font-black text-[9px] text-slate-500">
+                                {(p.ptc === 'ADT' || p.ptc === 'Adult') ? 'Adult' : (p.ptc === 'CHD' ? 'Child (CHD)' : (p.ptc === 'INF' ? 'Infant (INF)' : (p.ptc === 'UNMR' ? 'Unaccompanied Minor (UNMR)' : p.ptc || 'Adult')))}
+                              </span>
+                              {p.frequentFlyerNumber && (
+                                <span className="px-1.5 py-0.5 bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-100/50 dark:border-blue-900/30 rounded font-bold text-[9px]">FF: {p.frequentFlyerNumber}</span>
+                              )}
                             </span>
                           </td>
                           <td className="p-4 text-xs text-slate-500 dark:text-slate-400 font-medium">{p.dob || '---'}</td>

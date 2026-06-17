@@ -32,7 +32,10 @@ import {
   Tooltip, 
   ResponsiveContainer,
   AreaChart,
-  Area
+  Area,
+  BarChart,
+  Bar,
+  Cell
 } from 'recharts';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -639,37 +642,95 @@ export default function Dashboard() {
           <Card className="lg:col-span-3 border-slate-200 dark:border-slate-800 border-2 rounded-[2.5rem] overflow-hidden shadow-none bg-white dark:bg-slate-900">
             <CardHeader className="border-b border-slate-50 dark:border-slate-800/50 py-8 px-10">
               <div className="space-y-1">
-                <CardTitle className="text-xs font-black uppercase tracking-[0.3em] text-slate-400">Agent Performance</CardTitle>
-                <CardDescription className="text-slate-900 dark:text-white font-black text-lg tracking-tight uppercase">Top Producing Agents</CardDescription>
+                <CardTitle className="text-xs font-black uppercase tracking-[0.3em] text-slate-400">Agent Performance & Team Productivity</CardTitle>
+                <CardDescription className="text-slate-900 dark:text-white font-black text-lg tracking-tight uppercase">Authorizations & Leaderboard</CardDescription>
               </div>
             </CardHeader>
             <CardContent className="p-10">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-                {agentStats.map((agent, i) => (
-                  <div key={i} className="bg-slate-50 dark:bg-slate-800 p-6 rounded-3xl flex flex-col items-center text-center justify-center space-y-4 border border-slate-100 dark:border-slate-700 hover:border-blue-500 hover:shadow-lg transition-all w-full">
-                    <div className="w-16 h-16 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-600 dark:text-blue-400 font-black text-xl shadow-inner">
-                      {agent.name.charAt(0).toUpperCase()}
-                    </div>
-                    <div className="w-full">
-                      <p className="font-black text-slate-900 dark:text-white text-base leading-tight uppercase tracking-tight truncate">{agent.name}</p>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{agent.bookings} Bookings Created</p>
-                    </div>
-                    <div className="flex flex-col gap-1.5 items-center bg-white dark:bg-slate-900 p-3 rounded-2xl w-full border border-slate-100 dark:border-slate-800/80">
-                      <div className="flex justify-between w-full text-[9px] font-black uppercase text-slate-400 gap-2">
-                        <span>Secured:</span>
-                        <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">${agent.securedAmount.toLocaleString()}</span>
-                      </div>
-                      <div className="flex justify-between w-full text-[9px] font-black uppercase text-slate-400 gap-2">
-                        <span>Success Auth:</span>
-                        <span className="text-blue-600 dark:text-blue-400 font-extrabold">{agent.successfulAuth}</span>
-                      </div>
-                      <div className="flex justify-between w-full text-[9px] font-black uppercase text-slate-400 gap-2">
-                        <span>Paid Rev:</span>
-                        <span className="text-indigo-600 dark:text-indigo-400 font-extrabold">${agent.revenue.toLocaleString()}</span>
-                      </div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+                {/* Bar Chart Section */}
+                <div className="lg:col-span-2 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-black uppercase tracking-[0.2em] text-slate-505 text-slate-400">Agent Productivity Index (Authorizations)</h3>
+                    <div className="flex gap-2">
+                      <div className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse" />
+                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
                     </div>
                   </div>
-                ))}
+                  {agentStats.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-center opacity-30">
+                        <Activity className="w-12 h-12 text-slate-400 mb-4 animate-slow-spin" />
+                        <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.2em]">Gathering productivity metrics...</p>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-50/50 dark:bg-slate-950/20 p-6 rounded-3xl border border-slate-101 dark:border-slate-800/40">
+                      <ResponsiveContainer width="100%" height={320}>
+                        <BarChart data={agentStats} margin={{ top: 20, right: 10, left: -10, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="4 4" stroke="#334155" opacity={0.3} vertical={false} />
+                          <XAxis 
+                            dataKey="name" 
+                            axisLine={false} 
+                            tickLine={false} 
+                            tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 900 }} 
+                            dy={10}
+                          />
+                          <YAxis 
+                            axisLine={false} 
+                            tickLine={false} 
+                            tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 900 }} 
+                          />
+                          <Tooltip 
+                            cursor={{ fill: 'rgba(37, 99, 235, 0.04)' }}
+                            contentStyle={{ 
+                              borderRadius: '20px', 
+                              border: 'none', 
+                              boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.15)',
+                              padding: '12px 20px',
+                              backgroundColor: '#0f172a'
+                            }} 
+                            labelStyle={{ color: '#94a3b8', fontWeight: 900, textTransform: 'uppercase', fontSize: '11px', letterSpacing: '0.1em' }}
+                            itemStyle={{ color: '#2563eb', fontWeight: 900, fontSize: '13px' }}
+                          />
+                          <Bar dataKey="successfulAuth" radius={[8, 8, 0, 0]} name="Authorizations">
+                            {agentStats.map((entry, index) => {
+                              const colors = ['#2563eb', '#10b981', '#6366f1', '#f59e0b', '#ec4899'];
+                              return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
+                            })}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </div>
+
+                {/* Scorecards list */}
+                <div className="space-y-4">
+                  <h3 className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">Team Leaderboard</h3>
+                  <div className="space-y-4 overflow-y-auto max-h-[340px] pr-2">
+                    {agentStats.map((agent, i) => (
+                      <div key={i} className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl flex flex-col gap-3 border border-slate-100 dark:border-slate-800 hover:border-blue-500 transition-all">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-600 dark:text-blue-400 font-black text-sm shadow-inner">
+                              {agent.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="font-black text-slate-900 dark:text-white text-xs uppercase tracking-tight truncate max-w-[120px]">{agent.name}</p>
+                              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{agent.bookings} Bookings</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[10px] font-black uppercase text-emerald-600 dark:text-emerald-400">${agent.securedAmount.toLocaleString()}</p>
+                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{agent.successfulAuth} Authed</p>
+                          </div>
+                        </div>
+                        <div className="flex justify-between text-[9px] font-black uppercase text-slate-400 pt-1 border-t border-dashed border-slate-100 dark:border-slate-800">
+                          <span>Paid Rev: <span className="text-indigo-600 dark:text-indigo-400 font-bold">${agent.revenue.toLocaleString()}</span></span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>

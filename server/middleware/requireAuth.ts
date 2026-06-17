@@ -25,3 +25,18 @@ export const requireTenant = (req: Request, res: Response, next: NextFunction) =
     }
     next();
 };
+
+export const requireRole = (allowedRoles: string[]) => {
+    return (req: Request, res: Response, next: NextFunction) => {
+        const user = (req as any).user;
+        if (!user) {
+            return res.status(401).json({ error: 'Unauthorized: Authentication required' });
+        }
+        
+        const role = user.role || 'Agent';
+        if (!allowedRoles.includes(role)) {
+            return res.status(403).json({ error: `Forbidden: Access restricted. Required roles: [${allowedRoles.join(', ')}]` });
+        }
+        next();
+    };
+};

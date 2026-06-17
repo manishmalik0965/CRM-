@@ -32,6 +32,30 @@ export default function ActivityLogs() {
     fetchData();
   }, [clientId]);
 
+  const renderGranularTimestamp = (timestamp: any) => {
+    if (!timestamp) return 'Just now';
+    let dateObj: Date;
+    if (typeof timestamp === 'string' || typeof timestamp === 'number' || timestamp instanceof Date) {
+      dateObj = new Date(timestamp);
+    } else if (timestamp && timestamp.toDate && typeof timestamp.toDate === 'function') {
+      dateObj = timestamp.toDate();
+    } else {
+      return 'Just now';
+    }
+    if (isNaN(dateObj.getTime())) return 'Just now';
+    
+    const pad = (n: number, size = 2) => n.toString().padStart(size, '0');
+    const yyyy = dateObj.getFullYear();
+    const mm = pad(dateObj.getMonth() + 1);
+    const dd = pad(dateObj.getDate());
+    const hh = pad(dateObj.getHours());
+    const min = pad(dateObj.getMinutes());
+    const ss = pad(dateObj.getSeconds());
+    const ms = pad(dateObj.getMilliseconds(), 3);
+    
+    return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}.${ms}`;
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-1">
@@ -62,7 +86,7 @@ export default function ActivityLogs() {
             <TableHeader className="bg-muted/30">
               <TableRow>
                 <TableHead>Timestamp</TableHead>
-                <TableHead>User</TableHead>
+                <TableHead>User & Host IP</TableHead>
                 <TableHead>Action performed</TableHead>
                 <TableHead>Target ID</TableHead>
                 <TableHead className="text-right">Level</TableHead>
@@ -71,25 +95,35 @@ export default function ActivityLogs() {
             <TableBody>
               {Array.isArray(logs) && logs.map((log) => (
                 <TableRow key={log.id} className="text-sm transition-all hover:bg-slate-100/50 dark:hover:bg-slate-800/80 border-b border-slate-100 dark:border-slate-800 even:bg-slate-50/50 dark:even:bg-slate-800/50">
-                  <TableCell className="text-muted-foreground whitespace-nowrap">
-                    {log.timestamp ? (
-                      typeof log.timestamp === 'string' || typeof log.timestamp === 'number' || log.timestamp instanceof Date ? 
-                        formatDistanceToNow(new Date(log.timestamp), { addSuffix: true }) : 
-                        (log.timestamp.toDate ? formatDistanceToNow(log.timestamp.toDate(), { addSuffix: true }) : 'Just now')
-                    ) : 'Just now'}
+                  <TableCell className="text-muted-foreground whitespace-nowrap py-4">
+                    <p className="font-semibold text-xs text-slate-800 dark:text-slate-200">
+                      {log.timestamp ? (
+                        typeof log.timestamp === 'string' || typeof log.timestamp === 'number' || log.timestamp instanceof Date ? 
+                          formatDistanceToNow(new Date(log.timestamp), { addSuffix: true }) : 
+                          (log.timestamp.toDate ? formatDistanceToNow(log.timestamp.toDate(), { addSuffix: true }) : 'Just now')
+                      ) : 'Just now'}
+                    </p>
+                    <p className="text-[10px] font-mono tracking-tight text-slate-400 dark:text-slate-500 mt-0.5">
+                      {renderGranularTimestamp(log.timestamp)}
+                    </p>
                   </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                        <UserIcon className="w-3 h-3 text-muted-foreground" />
-                        <span className="font-medium text-xs">{log.userEmail || 'Internal Staff'}</span>
+                  <TableCell className="py-4">
+                    <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                            <UserIcon className="w-3 h-3 text-muted-foreground" />
+                            <span className="font-medium text-xs text-slate-700 dark:text-slate-300">{log.userEmail || 'Internal Staff'}</span>
+                        </div>
+                        <span className="font-mono text-[9px] text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-900/50 px-1.5 py-0.5 rounded border border-slate-200/40 dark:border-slate-800/40 w-max">
+                          {log.ipAddress || 'Unknown IP'}
+                        </span>
                     </div>
                   </TableCell>
-                  <TableCell className="font-medium truncate max-w-[400px]">
+                  <TableCell className="font-medium truncate max-w-[400px] py-4">
                     <p className="font-bold">{log.action}</p>
                     <p className="text-[10px] text-muted-foreground">{log.details}</p>
                   </TableCell>
-                  <TableCell className="font-mono text-[10px] text-muted-foreground">{log.bookingId || 'SYSTEM'}</TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="font-mono text-[10px] text-muted-foreground py-4">{log.bookingId || 'SYSTEM'}</TableCell>
+                  <TableCell className="text-right py-4">
                     <Popover>
                       <PopoverTrigger className="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 hover:bg-muted hover:text-accent-foreground h-8 w-8 rounded-lg outline-none cursor-pointer border-none bg-transparent">
                            <Badge variant="outline" className="text-[10px] uppercase font-black tracking-widest border-primary/20 text-primary">Info</Badge>
@@ -108,6 +142,14 @@ export default function ActivityLogs() {
                               <div className="space-y-1">
                                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">User Trace</p>
                                  <p className="text-xs font-bold text-slate-700">{log.userEmail || 'Internal System'}</p>
+                              </div>
+                              <div className="space-y-1">
+                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Source Host (IP Address)</p>
+                                 <p className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-950/20 px-2 py-1 rounded border border-blue-100/30 inline-block">{log.ipAddress || 'Unknown IP'}</p>
+                              </div>
+                              <div className="space-y-1">
+                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Granular Event Time</p>
+                                 <p className="text-xs font-mono font-semibold text-slate-700">{renderGranularTimestamp(log.timestamp)}</p>
                               </div>
                               <div className="space-y-1">
                                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Full Description</p>

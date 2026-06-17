@@ -51,6 +51,7 @@ export interface EmailData {
   arrivalDate?: string;
   cardHolderName?: string;
   cardLast4?: string;
+  cardBrand?: string;
 }
 
 export type EmailTemplateType = 'auth' | 'confirmation' | 'refund' | 'cancel' | 'changes';
@@ -146,14 +147,27 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
   const cchName = `<strong>${data.cardHolderName || data.passengerName || 'Valued Customer'}</strong>`;
   const cchDigits = spanWrap(data.cardLast4 || 'XXXX');
   const airlineHtml = `<strong>${data.airlineName}</strong>`;
+  
+  const rawBrand = (data.cardBrand || '').trim();
+  let brandName = '';
+  if (rawBrand) {
+    const bLower = rawBrand.toLowerCase();
+    if (bLower.includes('visa')) brandName = 'Visa';
+    else if (bLower.includes('mastercard') || bLower.includes('master')) brandName = 'Mastercard';
+    else if (bLower.includes('american express') || bLower.includes('amex')) brandName = 'American Express';
+    else if (bLower.includes('discover')) brandName = 'Discover';
+    else brandName = rawBrand;
+  }
+  const brandHtmlPrefix = brandName ? `<strong>${brandName}</strong> ` : '';
+
   // The pnr inside the text body
   const pnrHtml = spanWrap(data.pnr || data.crmId || '');
   const amountHtml = spanWrap(`${data.currency} ${(data.totalAmount || 0).toLocaleString()}`);
-  const gatewayHtml = data.validatedGateway ? ` via <strong>${data.validatedGateway}</strong>` : '';
+  const gatewayHtml = data.validatedGateway ? ` via <strong>${data.validatedGateway}</strong>` : ' via <strong>validated gateway</strong>';
 
   const greeting = `Dear ${cchName},<br/><br/>Greetings of the Day!<br/><br/>`;
   
-  const getSignatureText = (reason: string) => `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize ${airlineHtml} and Airline Desk Services to process the above-mentioned charges under the respective merchants to charge my card ending in ${cchDigits} for the ${reason} on the itinerary below with ${airlineHtml}.<br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
+  const getSignatureText = (reason: string) => `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize ${airlineHtml} and <strong>${data.validatedGateway || 'validated gateway'}</strong> to process the above-mentioned charges under the respective merchants to charge my ${brandHtmlPrefix}card ending in ${cchDigits} for the ${reason} on the itinerary below with ${airlineHtml}.<br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
   
   const footerText = `Your digital authorization has been successfully recorded and processed. Total secure amount: ${amountHtml}.`;
 
@@ -163,16 +177,16 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
     systemIntro = `We are pleased to confirm that your digital authorization for ${airlineHtml} (PNR: ${pnrHtml}) has been successfully recorded and processed. Your electronic tickets are now being finalized.`;
   } else if (type === 'refund') {
     if (data.refundType === 'credit') {
-      const gatewayStrong = data.validatedGateway ? `<strong>${data.validatedGateway}</strong>` : '<strong>Airline Desk</strong>';
+      const gatewayStrong = `<strong>${data.validatedGateway || 'validated gateway'}</strong>`;
       const approvedCreditsText = `Your booking (${pnrHtml}) has been approved for airline credits. The approved airline credits will be deposited directly into your airline account and may be used for future travel subject to airline policies. To finalize the airline credit issuance via ${gatewayStrong}, your authorization is required.`;
-      const authorizeCreditSig = `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize via ${gatewayStrong} to process the refund issuance fee and associated charges under the respective merchants to charge my card ending in ${cchDigits} for the refund issuance on the itinerary below.<br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
+      const authorizeCreditSig = `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize via ${gatewayStrong} to process the refund issuance fee and associated charges under the respective merchants to charge my ${brandHtmlPrefix}card ending in ${cchDigits} for the refund issuance on the itinerary below.<br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
       systemIntro = `${greeting}${approvedCreditsText}${authorizeCreditSig}${footerText}`;
     } else {
       systemIntro = `${greeting}Your booking (${pnrHtml}) has been processed for a refund. To finalize the transfer of funds back to your original payment method and process the associated refund issuance fee${gatewayHtml}, your explicit authorization is required.${getSignatureText('refund issuance')}${footerText}`;
     }
   } else if (type === 'cancel') {
-    const gatewayStrongText = data.validatedGateway ? `via <strong>${data.validatedGateway}</strong>` : 'via Airline Desk';
-    const refundCancelSigText = `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize ${airlineHtml} and ${data.validatedGateway ? `via <strong>${data.validatedGateway}</strong>` : 'Airline Desk Services'} to process the above-mentioned charges under the respective merchants to charge my card ending in ${cchDigits} for the cancellation, rebooking, and fare difference on the itinerary below with ${airlineHtml}.<br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
+    const gatewayStrongText = `via <strong>${data.validatedGateway || 'validated gateway'}</strong>`;
+    const refundCancelSigText = `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize ${airlineHtml} and <strong>${data.validatedGateway || 'validated gateway'}</strong> to process the above-mentioned charges under the respective merchants to charge my ${brandHtmlPrefix}card ending in ${cchDigits} for the cancellation, rebooking, and fare difference on the itinerary below with ${airlineHtml}.<br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
     systemIntro = `${greeting}We have successfully processed your cancellation and rebooking request for booking (${pnrHtml}). Your updated itinerary details are enclosed. To finalize the cancellation, rebooking, and any associated fare adjustments ${gatewayStrongText}, your authorization is required.${refundCancelSigText}${footerText}`;
 
      priceBreakdown = `
@@ -394,9 +408,13 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
         </div>
       `;
     } else {
+      let activeLink = data.authLink || "";
+      if (activeLink.includes('/authorize/')) {
+        activeLink = activeLink.replace('/authorize/', '/api/public/bookings/') + '/authorize-direct';
+      }
       buttonArea = `
         <div style="text-align: center; margin: 40px 0;">
-          <a href="${data.authLink}${data.authLink?.includes('?') ? '&' : '?'}direct=true" class="button" style="background-color: ${theme.primary}; box-shadow: 0 4px 6px -1px ${theme.primary}40;">${buttonText}</a>
+          <a href="${activeLink}" class="button" style="background-color: ${theme.primary}; box-shadow: 0 4px 6px -1px ${theme.primary}40;">${buttonText}</a>
           <p style="font-size: 11px; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 15px;">Secure one-click verification protocol</p>
         </div>
       `;
@@ -485,14 +503,27 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
           ${(data.passengers && data.passengers.length > 0) ? `
           <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin: 25px 0;">
             <p style="font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; color: #94a3b8; margin: 0 0 15px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">Passenger Details</p>
-            ${data.passengers.map(p => `
+            ${data.passengers.map(p => {
+              const ptcRaw = (p.ptc || '').trim().toUpperCase();
+              let formattedType = p.ptc || 'Adult';
+              if (ptcRaw === 'ADT' || ptcRaw === 'ADULT') formattedType = 'Adult';
+              else if (ptcRaw === 'CHD' || ptcRaw === 'CHILD') formattedType = 'Child (CHD)';
+              else if (ptcRaw === 'INF' || ptcRaw === 'INFANT') formattedType = 'Infant (INF)';
+              else if (ptcRaw === 'UNMR' || ptcRaw === 'UNACCOMPANIED MINOR') formattedType = 'Unaccompanied Minor (UNMR)';
+              return `
               <div style="margin-bottom: 10px; border-bottom: 1px dashed #e2e8f0; padding-bottom: 10px;">
                 <div style="font-weight: 800; color: #0f172a; font-size: 14px; text-transform: uppercase;">${p.name || ''}</div>
                 <div style="color: #64748b; font-size: 12px; margin-top: 4px;">
-                  DOB: ${p.dob || 'N/A'} &nbsp;|&nbsp; Gender: ${p.gender || 'N/A'} &nbsp;|&nbsp; Type: <span style="font-weight: 800; color: #334155;">${p.ptc || 'Adult'}</span>
+                  DOB: ${p.dob || 'N/A'} &nbsp;|&nbsp; Gender: ${p.gender || 'N/A'} &nbsp;|&nbsp; Type: <span style="font-weight: 800; color: #334155;">${formattedType}</span>
                 </div>
+                ${p.frequentFlyerNumber ? `
+                <div style="color: #64748b; font-size: 12px; margin-top: 4px;">
+                  FF#: <span style="font-weight: 800; color: #334155; text-transform: uppercase;">${p.frequentFlyerNumber}</span>
+                </div>
+                ` : ''}
               </div>
-            `).join('')}
+              `;
+            }).join('')}
           </div>
           ` : ''}
 

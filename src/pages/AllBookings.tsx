@@ -47,7 +47,8 @@ import {
   Link,
   Shield,
   XCircle,
-  CircleDashed
+  CircleDashed,
+  X
 } from 'lucide-react';
 import { 
   DropdownMenu,
@@ -615,6 +616,57 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                         <Badge variant="outline" className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-black px-4 py-2 rounded-xl text-[10px] tracking-widest uppercase transition-colors">MATCHES: {filtered.length}</Badge>
                     </div>
                 </div>
+
+                {/* Active Filter Chips / Badges row */}
+                {(statusFilter !== 'all' || agentFilter !== 'all' || airlineFilter !== 'all' || paymentStatusFilter !== 'all' || dateFilter !== 'all') && (
+                  <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-dashed border-slate-100 dark:border-slate-800">
+                    <span className="text-[10px] uppercase tracking-widest font-black text-slate-400 dark:text-slate-500 mr-2">Active Filters:</span>
+                    {statusFilter !== 'all' && (
+                      <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/50">
+                        <span>Status: <span className="font-extrabold uppercase">{statusFilter}</span></span>
+                        <X className="w-3 h-3 cursor-pointer hover:text-blue-800 ml-1" onClick={() => setStatusFilter('all')} />
+                      </Badge>
+                    )}
+                    {agentFilter !== 'all' && (
+                      <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 border border-purple-100 dark:border-purple-900/50">
+                        <span>Liaison: <span className="font-extrabold">{users.find(u => u.id === agentFilter)?.displayName || agentFilter}</span></span>
+                        <X className="w-3 h-3 cursor-pointer hover:text-purple-800 ml-1" onClick={() => setAgentFilter('all')} />
+                      </Badge>
+                    )}
+                    {airlineFilter !== 'all' && (
+                      <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/50">
+                        <span>Airline: <span className="font-extrabold uppercase">{airlineFilter}</span></span>
+                        <X className="w-3 h-3 cursor-pointer hover:text-emerald-800 ml-1" onClick={() => setAirlineFilter('all')} />
+                      </Badge>
+                    )}
+                    {paymentStatusFilter !== 'all' && (
+                      <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-100 dark:border-amber-900/50">
+                        <span>Payment: <span className="font-extrabold uppercase">{paymentStatusFilter === 'authorized' ? 'Authorized' : paymentStatusFilter === 'charged' ? 'Captured' : paymentStatusFilter === 'chargeback' ? 'Disputed' : 'Unpaid'}</span></span>
+                        <X className="w-3 h-3 cursor-pointer hover:text-amber-800 ml-1" onClick={() => setPaymentStatusFilter('all')} />
+                      </Badge>
+                    )}
+                    {dateFilter !== 'all' && (
+                      <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-900/50">
+                        <span>Time: <span className="font-extrabold uppercase">{dateFilter === 'custom' ? `${customStartDate || 'Start'} to ${customEndDate || 'End'}` : dateFilter}</span></span>
+                        <X className="w-3 h-3 cursor-pointer hover:text-indigo-800 ml-1" onClick={() => { setDateFilter('all'); setCustomStartDate(''); setCustomEndDate(''); }} />
+                      </Badge>
+                    )}
+                    <button 
+                      onClick={() => {
+                        setStatusFilter('all');
+                        setAgentFilter('all');
+                        setAirlineFilter('all');
+                        setPaymentStatusFilter('all');
+                        setDateFilter('all');
+                        setCustomStartDate('');
+                        setCustomEndDate('');
+                      }}
+                      className="text-[10px] font-black uppercase tracking-widest text-red-500 hover:underline cursor-pointer bg-transparent border-none ml-2"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                )}
 
                 <AnimatePresence>
                   {showFilters && (
