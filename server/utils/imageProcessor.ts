@@ -18,19 +18,19 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 export async function processBase64Images(html: string, baseUrl: string): Promise<string> {
     if (!html) return html;
 
-    // Regex to find base64 images
-    const base64Regex = /<img[^>]+src="data:image\/([a-zA-Z]+);base64,([^">]+)"([^>]*)>/g;
+    // Regex to find data:image base64 strings in src attributes (single or double quotes)
+    const base64Regex = /src=["'](data:image\/([a-zA-Z0-9+-]+);base64,([^"']+))["']/gi;
     
     let processedHtml = html;
     let match;
 
     while ((match = base64Regex.exec(html)) !== null) {
-        const fullImgTag = match[0];
-        const extension = match[1];
-        const base64Data = match[2];
-        const otherAttributes = match[3];
+        const fullDataUrl = match[1];
+        const rawExtension = match[2];
+        const base64Data = match[3];
 
         try {
+            const extension = rawExtension.toLowerCase().replace('jpeg', 'jpg').split('+')[0] || 'png';
             const buffer = Buffer.from(base64Data, 'base64');
             
             // Generate hash to prevent duplicate uploads
@@ -44,12 +44,10 @@ export async function processBase64Images(html: string, baseUrl: string): Promis
             }
 
             // Construct public URL
-            // baseUrl should be like 'https://yourdomain.com'
             const publicUrl = `${baseUrl}/uploads/email-images/${fileName}`;
             
-            // Replace in HTML
-            const newImgTag = `<img src="${publicUrl}"${otherAttributes}>`;
-            processedHtml = processedHtml.replace(fullImgTag, newImgTag);
+            // Replace full data URL with public URL
+            processedHtml = processedHtml.replace(fullDataUrl, publicUrl);
             
             console.log(`[ImageProcessor] Processed base64 image: ${fileName}`);
         } catch (error) {

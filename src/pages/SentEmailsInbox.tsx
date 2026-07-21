@@ -354,7 +354,48 @@ export default function SentEmailsInbox() {
                     </div>
                     <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white shadow-inner">
                       <iframe
-                        srcDoc={selectedEmail.body_html || '<p className="p-4 text-center">No HTML content logged for this communication.</p>'}
+                        srcDoc={(() => {
+                          if (!selectedEmail || !selectedEmail.body_html) return '<p class="p-4 text-center">No HTML content logged for this communication.</p>';
+                          let html = selectedEmail.body_html;
+                          let dataSent = selectedEmail.data_sent;
+                          if (typeof dataSent === 'string') {
+                            try { dataSent = JSON.parse(dataSent); } catch (e) {}
+                          }
+                          if (dataSent) {
+                            if (dataSent.snapshotBase64) {
+                              const cleanSnap = dataSent.snapshotBase64.replace(/^data:image\/[a-zA-Z0-9+-]+;base64,/, '');
+                              html = html.replace(/src=["']cid:bookingsnapshot[^"']*["']/gi, `src="data:image/jpeg;base64,${cleanSnap}"`);
+                            }
+                            if (dataSent.signatureBase64) {
+                              const cleanSig = dataSent.signatureBase64.replace(/^data:image\/[a-zA-Z0-9+-]+;base64,/, '');
+                              html = html.replace(/src=["']cid:signatureimg[^"']*["']/gi, `src="data:image/png;base64,${cleanSig}"`);
+                            }
+                          }
+
+                          // 1. RESTRICT "I AUTHORISE" BUTTON FROM AGENT LEVEL IN EMAIL SENT BOX
+                          html = html.replace(
+                            /<a\b[^>]*href=["'][^"']*\/authorize\/[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi,
+                            `<div style="display:inline-block; padding: 14px 28px; background: #64748b; color: #ffffff; font-weight: 800; font-size: 13px; text-transform: uppercase; border-radius: 8px; font-family: sans-serif; cursor: not-allowed; opacity: 0.85; margin: 10px 0; border: 2px solid #475569;" title="Agent Restricted: Authorization can only be completed by the passenger from their email inbox">
+                              🔒 $1 (RESTRICTED FOR AGENTS)
+                            </div>`
+                          );
+
+                          // Also inject non-clickable styling for any authorization links
+                          const restrictionStyle = `<style>
+                            a[href*="/authorize/"] {
+                              pointer-events: none !important;
+                              cursor: not-allowed !important;
+                              background-color: #64748b !important;
+                              color: #ffffff !important;
+                            }
+                          </style>`;
+                          html = html.replace('</head>', `${restrictionStyle}</head>`);
+                          if (!html.includes('</head>')) {
+                            html = `${restrictionStyle}${html}`;
+                          }
+
+                          return html;
+                        })()}
                         className="w-full h-[550px] bg-white"
                         title="Email Body Preview"
                         sandbox="allow-same-origin"

@@ -60,44 +60,86 @@ export function createSmtpTransporter(profile: any) {
   });
 }
 
-async function processAttachmentsAndRichText(attachmentsList: any[] | undefined, packageRichText: string | undefined, snapshotBase64: string | undefined, bookingId: string, req: express.Request) {
+async function processAttachmentsAndRichText(
+  attachmentsList: any[] | undefined,
+  packageRichText: string | undefined,
+  snapshotBase64: string | undefined,
+  bookingId: string,
+  req: express.Request
+) {
   let finalAttachments = attachmentsList ? [...attachmentsList] : [];
-  let processedRichText = packageRichText;
+  let processedRichText = packageRichText || '';
   let snapshotUrl = undefined;
 
   const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
   const baseUrl = `${proto}://${req.get('host')}`;
 
+  // 1. Process base64 embedded images in packageRichText
   if (processedRichText) {
-    // Replaced Base64-to-CID with URL-based images for better Gmail compatibility
-    processedRichText = await processBase64Images(processedRichText, baseUrl);
-  }
-
-  if (snapshotBase64) {
     try {
-      // Also process snapshot if it's base64
-      if (snapshotBase64.startsWith('data:image/')) {
-        const tempHtml = `<img src="${snapshotBase64}">`;
-        const processedHtml = await processBase64Images(tempHtml, baseUrl);
-        const match = processedHtml.match(/src="([^"]+)"/);
-        if (match) {
-          snapshotUrl = match[1];
-        }
-      }
+      processedRichText = await processBase64Images(processedRichText, baseUrl);
+    } catch (e) {
+      console.warn("[processAttachmentsAndRichText] Base64 image cache warning:", e);
+    }
 
-      // If failed or not processed, fallback to CID for now or skip if user wants NO CIDs
-      if (!snapshotUrl) {
-        snapshotUrl = `cid:bookingsnapshot`;
+    // Convert any remaining base64 images in packageRichText into CID attachments for maximum email client compatibility
+    const base64ImgRegex = /src=["'](data:image\/([a-zA-Z0-9+-]+);base64,([^"']+))["']/gi;
+    let match;
+    let imgCount = 0;
+    while ((match = base64ImgRegex.exec(processedRichText)) !== null) {
+      const fullDataUrl = match[1];
+      const mimeType = match[2];
+      const base64Str = match[3];
+      const cidName = `rich_img_${imgCount}_${Date.now()}`;
+      const ext = mimeType.toLowerCase().replace('jpeg', 'jpg').split('+')[0] || 'png';
+
+      try {
+        const imgBuffer = Buffer.from(base64Str, 'base64');
         finalAttachments.push({
-          filename: `Booking_Snapshot_${bookingId}.jpg`,
-          content: snapshotBase64.split(',')[1] || snapshotBase64,
-          encoding: 'base64',
-          cid: 'bookingsnapshot',
+          filename: `embedded_image_${imgCount}.${ext}`,
+          content: imgBuffer,
+          cid: cidName,
           contentDisposition: 'inline'
         });
+
+        processedRichText = processedRichText.replace(fullDataUrl, `cid:${cidName}`);
+        imgCount++;
+      } catch (err) {
+        console.error(`[processAttachmentsAndRichText] Error embedding image ${imgCount}:`, err);
+      }
+    }
+
+    // Ensure relative image paths resolve to absolute URLs
+    processedRichText = processedRichText.replace(/src=["']\/(?!\/)/g, `src="${baseUrl}/`);
+  }
+
+  // 2. Process Booking Snapshot Image (snapshotBase64)
+  if (snapshotBase64 && typeof snapshotBase64 === 'string' && snapshotBase64.trim().length > 0) {
+    try {
+      const cleanBase64 = snapshotBase64.replace(/^data:image\/[a-zA-Z0-9+-]+;base64,/, '').trim();
+      if (cleanBase64.length > 0) {
+        const imgBuffer = Buffer.from(cleanBase64, 'base64');
+        const snapshotCid = `bookingsnapshot`;
+
+        // Check if snapshotCid is already in finalAttachments
+        const existingIdx = finalAttachments.findIndex((a: any) => a.cid === snapshotCid);
+        const attachmentObj = {
+          filename: `Booking_Snapshot_${bookingId || 'Overview'}.png`,
+          content: imgBuffer,
+          cid: snapshotCid,
+          contentDisposition: 'inline'
+        };
+
+        if (existingIdx >= 0) {
+          finalAttachments[existingIdx] = attachmentObj;
+        } else {
+          finalAttachments.push(attachmentObj);
+        }
+
+        snapshotUrl = `cid:${snapshotCid}`;
       }
     } catch (e) {
-      console.error("Failed to process snapshot image:", e);
+      console.error("[processAttachmentsAndRichText] Failed to process snapshotBase64:", e);
     }
   }
 

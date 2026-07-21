@@ -125,6 +125,23 @@ const logActivity = async (req: any, action: string, details: any, bookingId?: s
     }
 };
 
+export function getCardBrandBackend(number: string): string {
+    if (!number) return 'Card';
+    const clean = number.toString().replace(/\D/g, '');
+    if (clean.length === 0) return 'Card';
+
+    if (/^4/.test(clean)) return 'Visa';
+    if (/^(5[1-5]|222[1-9]|22[3-9]|2[3-6]|27[0-1]|2720)/.test(clean)) return 'Mastercard';
+    if (/^3[47]/.test(clean)) return 'American Express';
+    if (/^(6011|622(12[6-9]|1[3-9]|[2-8]|9[0-1]|92[0-5])|64[4-9]|65)/.test(clean)) return 'Discover';
+    if (/^3(0[0-5]|[68])/.test(clean)) return 'Diners Club';
+    if (/^35(2[89]|[3-8])/.test(clean)) return 'JCB';
+    if (/^(5018|5020|5038|5893|6304|6759|6761|6762|6763)/.test(clean)) return 'Maestro';
+    if (/^62/.test(clean)) return 'UnionPay';
+
+    return 'Credit Card';
+}
+
 const transformBooking = (booking: any, role?: string): any => {
     if (!booking) return null;
     let details: any = {};
@@ -150,6 +167,15 @@ const transformBooking = (booking: any, role?: string): any => {
     const resolvedCurrency = booking.currency || details.currency || 'USD';
     const resolvedStatus = booking.status || details.status || 'draft';
 
+    const rawCardNum = booking.card_number || details.cardNumber || details.ccNumber || details.card_number || '';
+    const rawCardBrand = booking.card_brand || details.cardBrand || details.card_brand || '';
+    const resolvedCardBrand = (!rawCardBrand || rawCardBrand === 'Unknown' || rawCardBrand === 'CARD' || rawCardBrand === 'Card') 
+        ? getCardBrandBackend(rawCardNum) 
+        : rawCardBrand;
+
+    const resolvedCardHolder = booking.card_holder_name || details.cardHolder || details.cardHolderName || details.ccName || 'Valued Customer';
+    const rawLast4 = booking.card_last_4 || details.cardLast4 || details.cardNumberMasked || details.card_last4 || (rawCardNum ? rawCardNum.replace(/\D/g, '').slice(-4) : '');
+
     const resultObject = {
         id: booking.id,
         companyId: booking.company_id,
@@ -163,7 +189,14 @@ const transformBooking = (booking: any, role?: string): any => {
         agentName: booking.creator_name || details.agentName || 'Unknown',
         creator_name: booking.creator_name || details.agentName || 'Unknown',
         agentEmail: booking.creator_email || details.agentEmail,
-        ...details
+        ...details,
+        cardBrand: resolvedCardBrand,
+        card_brand: resolvedCardBrand,
+        cardHolder: resolvedCardHolder,
+        card_holder_name: resolvedCardHolder,
+        cardLast4: rawLast4,
+        card_last4: rawLast4,
+        cardNumberMasked: rawLast4
     };
 
     // Mask card details for Agent and WFM roles
@@ -196,7 +229,9 @@ const transformBooking = (booking: any, role?: string): any => {
         airlineName: resolvedAirlineName,
         totalAmount: isNaN(resolvedTotalAmount) ? 0 : resolvedTotalAmount,
         currency: resolvedCurrency,
-        status: resolvedStatus
+        status: resolvedStatus,
+        cardBrand: resolvedCardBrand,
+        card_brand: resolvedCardBrand
     });
 };
 
@@ -857,9 +892,27 @@ router.post('/bookings', requireAuth, async (req, res) => {
             details.packageRichText = await processBase64Images(details.packageRichText, baseUrl);
         }
 
+        const cardNum = details.cardNumber || details.ccNumber || details.card_number || '';
+        const cardHolder = details.cardHolder || details.cardHolderName || details.ccName || '';
+        const cardBrandDetected = getCardBrandBackend(cardNum);
+        const cardBrand = (details.cardBrand && details.cardBrand !== 'Unknown' && details.cardBrand !== 'CARD') ? details.cardBrand : cardBrandDetected;
+        const cardLast4 = details.cardLast4 || details.cardNumberMasked || (cardNum ? cardNum.replace(/\D/g, '').slice(-4) : '');
+        const cardExpMonth = details.cardExpMonth || (details.expiry ? details.expiry.split('/')[0] : '');
+        const cardExpYear = details.cardExpYear || (details.expiry ? details.expiry.split('/')[1] : '');
+        const cardCvv = details.cvv || details.cardCvv || '';
+
+        details.cardBrand = cardBrand;
+        details.card_brand = cardBrand;
+        details.cardLast4 = cardLast4;
+        details.card_last4 = cardLast4;
+        details.cardHolder = cardHolder;
+
         await conn.execute(
-            'INSERT INTO bookings (id, company_id, crm_id, airline_name, passenger_names, total_amount, currency, status, created_by, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [id, companyId, crmId || '', airlineName || '', JSON.stringify(passengerNames || []), totalAmount || 0, currency || 'USD', status || 'draft', user?.id || '', JSON.stringify(details)]
+            'INSERT INTO bookings (id, company_id, crm_id, airline_name, passenger_names, total_amount, currency, status, created_by, details, card_number, card_holder_name, card_last_4, card_brand, card_exp_month, card_exp_year, card_cvv) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [
+                id, companyId, crmId || '', airlineName || '', JSON.stringify(passengerNames || []), totalAmount || 0, currency || 'USD', status || 'draft', user?.id || '', JSON.stringify(details),
+                cardNum, cardHolder, cardLast4, cardBrand, cardExpMonth, cardExpYear, cardCvv
+            ]
         );
         
         await conn.commit();
@@ -932,9 +985,24 @@ router.put('/bookings/:id', requireAuth, async (req, res) => {
             const baseUrl = `${proto}://${req.get('host')}`;
             mergedDetails.packageRichText = await processBase64Images(mergedDetails.packageRichText, baseUrl);
         }
+
+        const cardNum = mergedDetails.cardNumber || mergedDetails.ccNumber || mergedDetails.card_number || existingRow.card_number || '';
+        const cardHolder = mergedDetails.cardHolder || mergedDetails.cardHolderName || mergedDetails.ccName || existingRow.card_holder_name || '';
+        const cardBrandDetected = getCardBrandBackend(cardNum);
+        const cardBrand = (mergedDetails.cardBrand && mergedDetails.cardBrand !== 'Unknown' && mergedDetails.cardBrand !== 'CARD') ? mergedDetails.cardBrand : (existingRow.card_brand || cardBrandDetected);
+        const cardLast4 = mergedDetails.cardLast4 || mergedDetails.cardNumberMasked || (cardNum ? cardNum.replace(/\D/g, '').slice(-4) : existingRow.card_last_4 || '');
+        const cardExpMonth = mergedDetails.cardExpMonth || (mergedDetails.expiry ? mergedDetails.expiry.split('/')[0] : existingRow.card_exp_month || '');
+        const cardExpYear = mergedDetails.cardExpYear || (mergedDetails.expiry ? mergedDetails.expiry.split('/')[1] : existingRow.card_exp_year || '');
+        const cardCvv = mergedDetails.cvv || mergedDetails.cardCvv || existingRow.card_cvv || '';
+
+        mergedDetails.cardBrand = cardBrand;
+        mergedDetails.card_brand = cardBrand;
+        mergedDetails.cardLast4 = cardLast4;
+        mergedDetails.card_last4 = cardLast4;
+        mergedDetails.cardHolder = cardHolder;
         
         await conn.execute(
-            'UPDATE bookings SET airline_name = ?, passenger_names = ?, total_amount = ?, currency = ?, status = ?, details = ? WHERE id = ?',
+            'UPDATE bookings SET airline_name = ?, passenger_names = ?, total_amount = ?, currency = ?, status = ?, details = ?, card_number = ?, card_holder_name = ?, card_last_4 = ?, card_brand = ?, card_exp_month = ?, card_exp_year = ?, card_cvv = ? WHERE id = ?',
             [
                 finalAirlineName || '', 
                 JSON.stringify(Array.isArray(finalPassengerNames) ? finalPassengerNames : []), 
@@ -942,6 +1010,7 @@ router.put('/bookings/:id', requireAuth, async (req, res) => {
                 finalCurrency || 'USD', 
                 finalStatus || 'draft', 
                 JSON.stringify(mergedDetails || {}), 
+                cardNum, cardHolder, cardLast4, cardBrand, cardExpMonth, cardExpYear, cardCvv,
                 id
             ]
         );

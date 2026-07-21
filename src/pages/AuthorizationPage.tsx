@@ -18,6 +18,7 @@ import { jsPDF } from 'jspdf';
 import { toast } from 'sonner';
 import DOMPurify from 'dompurify';
 import { cn } from '@/lib/utils';
+import { CardBrandBadge } from '@/lib/payment-icons';
 
 const sanitizeHtml = (html: string) => {
   return DOMPurify.sanitize(html, {
@@ -290,6 +291,12 @@ export default function AuthorizationPage() {
   if (loading && step === 1) return <div className="h-screen flex items-center justify-center font-bold text-slate-750">Verifying Authorization Link...</div>;
   if (!booking && !loading) return <div className="h-screen flex items-center justify-center text-destructive font-bold">Invalid or Expired Link</div>;
 
+  // Check if current user is a logged-in CRM staff member
+  const crmUser = (() => {
+    try { return JSON.parse(localStorage.getItem('crm_user') || '{}'); } catch(e) { return {}; }
+  })();
+  const isAgentLoggedIn = Boolean(crmUser && crmUser.email && ['Agent', 'User', 'Manager', 'HOD', 'Admin', 'Superadmin'].includes(crmUser.role) && !isQuickAuth);
+
   return (
     <div className="min-h-screen bg-muted/40 py-12 px-4">
       <div className="max-w-2xl mx-auto space-y-8">
@@ -297,6 +304,17 @@ export default function AuthorizationPage() {
         <div className="text-center space-y-2">
             <p className="text-muted-foreground font-medium uppercase tracking-widest text-xs">Authorization Portal</p>
         </div>
+
+        {/* Agent Restriction Alert Banner if viewed by logged-in staff */}
+        {isAgentLoggedIn && step !== 4 && (
+          <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs font-semibold flex items-center gap-3 shadow-sm">
+            <Lock className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+            <div>
+              <p className="font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">Agent Preview Mode Active</p>
+              <p className="font-normal opacity-90">You are logged in as <span className="font-bold">{crmUser.role}</span> ({crmUser.email}). The "I Authorise" button is restricted for internal staff and can only be executed by the passenger directly from their external email inbox link.</p>
+            </div>
+          </div>
+        )}
 
         <Card className="border-none shadow-2xl overflow-hidden">
             <div 
@@ -430,6 +448,26 @@ export default function AuthorizationPage() {
                                 </div>
                             )}
 
+                        <Separator />
+                        <div>
+                            <h4 className="text-xs font-black text-muted-foreground uppercase tracking-widest mb-2">Payment Card Method</h4>
+                            <div className="flex items-center justify-between p-3.5 rounded-xl border bg-slate-50/80 dark:bg-slate-900/50">
+                                <div>
+                                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Cardholder Name</p>
+                                    <p className="text-sm font-bold uppercase text-slate-900 dark:text-slate-100">{booking.cardHolder || booking.card_holder_name || passengers[0]?.name || 'Valued Customer'}</p>
+                                </div>
+                                <div className="text-right flex flex-col items-end gap-1">
+                                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Form of Payment</p>
+                                    <div className="flex items-center gap-2">
+                                        <CardBrandBadge brand={booking.cardBrand || booking.card_brand || 'Card'} />
+                                        <span className="text-sm font-black font-mono tracking-wider text-slate-800 dark:text-slate-200">
+                                            •••• {booking.cardLast4 || booking.cardNumberMasked || booking.card_last4 || (booking.cardNumber ? booking.cardNumber.slice(-4) : 'XXXX')}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         {authDetails && (
                             <>
                             <Separator />
@@ -512,7 +550,8 @@ export default function AuthorizationPage() {
                 </CardContent>
                 {step !== 4 && (
                     <CardFooter>
-                        <Button className="w-full h-12 text-lg font-bold shadow-lg shadow-primary/20" disabled={loading} onClick={async () => {
+                        <Button className="w-full h-12 text-lg font-bold shadow-lg shadow-primary/20" disabled={loading || isAgentLoggedIn} onClick={async () => {
+                            if (isAgentLoggedIn) return toast.error("Agents cannot authorize bookings. This action is reserved for the passenger from their email inbox.");
                             setLoading(true);
                             try {
                                 const rawCH = (booking.cardHolder || '').trim();
@@ -529,6 +568,11 @@ export default function AuthorizationPage() {
                                 <span className="flex items-center justify-center gap-2">
                                     <Loader2 className="w-5 h-5 animate-spin" />
                                     <span>PROCESSING AUTHORIZATION...</span>
+                                </span>
+                            ) : isAgentLoggedIn ? (
+                                <span className="flex items-center justify-center gap-2 text-amber-100">
+                                    <Lock className="w-5 h-5" />
+                                    <span>I AUTHORIZE (RESTRICTED FOR AGENTS)</span>
                                 </span>
                             ) : (
                                 'I AUTHORIZE'

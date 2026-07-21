@@ -134,19 +134,6 @@ export default function CreateBooking({ profile }: { profile: any }) {
   const { clientId } = useTenant();
   const navigate = useNavigate();
   const { id } = useParams();
-
-  if (profile?.role !== 'Agent' && !id) {
-    return (
-      <div className="p-12 text-center bg-slate-50 dark:bg-slate-900 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-center flex-col gap-3 min-h-[400px] mt-10">
-        <div className="w-12 h-12 bg-red-50 dark:bg-red-900/10 rounded-2xl flex items-center justify-center text-red-500 mb-2">
-          <Lock className="w-6 h-6" />
-        </div>
-        <h3 className="text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-widest">Access Restricted</h3>
-        <p className="text-xs text-slate-500 max-w-sm leading-relaxed">Only Agents are authorized to create or initialize bookings. All other system roles have view/edit permissions only for existing active bookings.</p>
-        <Button variant="outline" size="sm" onClick={() => navigate('/')} className="mt-4 uppercase tracking-widest text-[10px] font-bold">Go To Dashboard</Button>
-      </div>
-    );
-  }
   
   const isPrivileged = ['Admin', 'Manager', 'HOD', 'Superadmin'].includes(profile?.role || '');
   const isManager = isPrivileged;
@@ -452,10 +439,10 @@ export default function CreateBooking({ profile }: { profile: any }) {
             country: d.country || ''
         });
         setPayment({
-            ccName: d.cardHolder || '',
-            ccNumber: d.cardNumber || '',
-            expiry: d.expiry || '',
-            cvv: d.cvv || ''
+            ccName: d.cardHolder || d.card_holder_name || '',
+            ccNumber: d.cardNumber || d.card_number || d.ccNumber || '',
+            expiry: d.expiry || (d.cardExpMonth && d.cardExpYear ? `${d.cardExpMonth}/${d.cardExpYear}` : ''),
+            cvv: d.cvv || d.cardCvv || ''
         });
         setPricing({
             total: d.totalAmount || 0,
@@ -847,12 +834,24 @@ export default function CreateBooking({ profile }: { profile: any }) {
       }
 
       if (canEditSensitive || addingNewCard) {
+        const detectedB = detectBrand(payment.ccNumber);
+        const expParts = payment.expiry ? payment.expiry.split('/') : ['', ''];
+        const cardLast4 = payment.ccNumber ? payment.ccNumber.replace(/\D/g, '').slice(-4) : (existingSnap?.data?.cardLast4 || existingSnap?.data?.card_last_4 || '');
+
         dataToSave.cardHolder = (payment.ccName || passengers[0]?.name || passengers[0] || '').toUpperCase();
+        dataToSave.card_holder_name = dataToSave.cardHolder;
         dataToSave.cardNumber = payment.ccNumber;
-        dataToSave.cardNumberMasked = payment.ccNumber ? payment.ccNumber.slice(-4) : '';
+        dataToSave.card_number = payment.ccNumber;
+        dataToSave.cardNumberMasked = cardLast4;
+        dataToSave.cardLast4 = cardLast4;
+        dataToSave.card_last_4 = cardLast4;
         dataToSave.expiry = payment.expiry;
+        dataToSave.cardExpMonth = expParts[0] || '';
+        dataToSave.cardExpYear = expParts[1] || '';
         dataToSave.cvv = payment.cvv;
-        dataToSave.cardBrand = detectBrand(payment.ccNumber);
+        dataToSave.cardCvv = payment.cvv;
+        dataToSave.cardBrand = detectedB;
+        dataToSave.card_brand = detectedB;
       }
 
       setRemarks(finalRemarks); setNewRemark('');
@@ -1051,6 +1050,19 @@ export default function CreateBooking({ profile }: { profile: any }) {
   else if (emailTemplateType === 'cancel') previewHtml = generateCancelEmail(previewHtmlData);
   else if (emailTemplateType === 'changes') previewHtml = generateChangesEmail(previewHtmlData);
   else previewHtml = generateAuthEmail(previewHtmlData);
+
+  if (profile?.role !== 'Agent' && !id) {
+    return (
+      <div className="p-12 text-center bg-slate-50 dark:bg-slate-900 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-center flex-col gap-3 min-h-[400px] mt-10">
+        <div className="w-12 h-12 bg-red-50 dark:bg-red-900/10 rounded-2xl flex items-center justify-center text-red-500 mb-2">
+          <Lock className="w-6 h-6" />
+        </div>
+        <h3 className="text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-widest">Access Restricted</h3>
+        <p className="text-xs text-slate-500 max-w-sm leading-relaxed">Only Agents are authorized to create or initialize bookings. All other system roles have view/edit permissions only for existing active bookings.</p>
+        <Button variant="outline" size="sm" onClick={() => navigate('/')} className="mt-4 uppercase tracking-widest text-[10px] font-bold">Go To Dashboard</Button>
+      </div>
+    );
+  }
 
   return (
     <>

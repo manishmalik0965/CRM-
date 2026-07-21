@@ -95,6 +95,13 @@ pool.query('ALTER TABLE users ADD COLUMN photo_url VARCHAR(500)').catch(() => {}
 pool.query('ALTER TABLE users ADD COLUMN phone VARCHAR(100)').catch(() => {});
 pool.query('ALTER TABLE users ADD COLUMN user_id VARCHAR(255) UNIQUE').catch(() => {});
 pool.query('ALTER TABLE bookings ADD COLUMN details JSON').catch(() => {});
+pool.query('ALTER TABLE bookings ADD COLUMN card_number VARCHAR(255)').catch(() => {});
+pool.query('ALTER TABLE bookings ADD COLUMN card_holder_name VARCHAR(255)').catch(() => {});
+pool.query('ALTER TABLE bookings ADD COLUMN card_last_4 VARCHAR(10)').catch(() => {});
+pool.query('ALTER TABLE bookings ADD COLUMN card_brand VARCHAR(50)').catch(() => {});
+pool.query('ALTER TABLE bookings ADD COLUMN card_exp_month VARCHAR(10)').catch(() => {});
+pool.query('ALTER TABLE bookings ADD COLUMN card_exp_year VARCHAR(10)').catch(() => {});
+pool.query('ALTER TABLE bookings ADD COLUMN card_cvv VARCHAR(10)').catch(() => {});
 pool.query(`
   CREATE TABLE IF NOT EXISTS settings (
     company_id CHAR(36) PRIMARY KEY,
