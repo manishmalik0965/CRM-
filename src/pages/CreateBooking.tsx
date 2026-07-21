@@ -37,25 +37,37 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Plane, Trash2, Plus, UserPlus, Clipboard, CreditCard, DollarSign, Contact, ListChecks, Mail, FileText, ChevronRight, AlertCircle, Info, Calendar, Shield, Save, Lock, Search, Download, Check, CheckCircle2, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getCardBrand } from '@/lib/payment-utils';
+import { getCardBrandIcon } from '@/lib/payment-icons';
 import { toast } from 'sonner';
 import { generateAuthEmail, generateCancelEmail, generateChangesEmail, generateRefundEmail } from '@/lib/emailTemplates';
-import { generateBookingConfirmation } from '@/lib/pdfGenerator';
+import { generateBookingConfirmation, generateBookingReport } from '@/lib/pdfGenerator';
 
 
 // We removed static airport data as per user instructions
 // using Google Flights API dynamically via server side
 
-
-const detectBrand = (number: string) => {
-  if (!number) return 'Unknown';
-  if (number.startsWith('4')) return 'Visa';
-  if (/^5[1-5]/.test(number) || /^2[2-7]/.test(number)) return 'Mastercard';
-  if (/^3[47]/.test(number)) return 'American Express';
-  if (/^6(?:011|5)/.test(number)) return 'Discover';
-  return 'Unknown';
+const highlightMatch = (text: string, search: string) => {
+  if (!search) return <span>{text}</span>;
+  const parts = text.split(new RegExp(`(${search.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi'));
+  return (
+    <span>
+      {parts.map((part, i) => 
+        part.toLowerCase() === search.toLowerCase() ? (
+          <mark key={i} className="bg-yellow-100 dark:bg-yellow-950/70 text-blue-600 dark:text-blue-400 font-bold rounded-sm px-0.5">{part}</mark>
+        ) : (
+          part
+        )
+      )}
+    </span>
+  );
 };
 
+
+const detectBrand = getCardBrand;
+
 const AIRLINE_DOMAINS: Record<string, string> = {
+  // Airlines
   'delta': 'delta.com', 'united': 'united.com', 'american': 'aa.com',
   'jetblue': 'jetblue.com', 'southwest': 'southwest.com', 'alaska': 'alaskaair.com',
   'spirit': 'spirit.com', 'frontier': 'flyfrontier.com', 'british airways': 'britishairways.com',
@@ -70,10 +82,27 @@ const AIRLINE_DOMAINS: Record<string, string> = {
   'india': 'airindia.in', 'spicejet': 'spicejet.com', 'aer lingus': 'aerlingus.com',
   'finnair': 'finnair.com', 'sas': 'flysas.com', 'norwegian': 'norwegian.com',
   'iberia': 'iberia.com', 'tap': 'flytap.com', 'turkish airlines': 'turkishairlines.com',
-  'turkish': 'turkishairlines.com', 'carnival': 'carnival.com', 'royal caribbean': 'royalcaribbean.com', 
+  'turkish': 'turkishairlines.com', 'thai': 'thaiairways.com', 'eva': 'evaair.com', 
+  'korean': 'koreanair.com', 'asiana': 'flyasiana.com', 'vietnam': 'vietnamairlines.com', 
+  'garuda': 'garuda-indonesia.com', 'malaysia': 'malaysiaairlines.com', 
+  'philippine': 'philippineairlines.com', 'air asia': 'airasia.com', 
+  'lion air': 'lionair.co.id', 'jetstar': 'jetstar.com', 'scoot': 'flyscoot.com', 
+  'vueling': 'vueling.com', 'volotea': 'volotea.com', 'eurowings': 'eurowings.com', 
+  'swiss': 'swiss.com', 'austrian': 'austrian.com', 'brussels': 'brusselsairlines.com', 
+  'lot': 'lot.com', 'ita': 'itaspa.com', 'alitalia': 'alitalia.com', 
+  'aegean': 'aegeanair.com', 'el al': 'elal.com', 'ethiopian': 'ethiopianairlines.com', 
+  'kenya': 'kenya-airways.com', 'south african': 'flysaa.com', 
+  'royal air maroc': 'royalairmaroc.com', 'egyptair': 'egyptair.com', 
+  'air china': 'airchina.com.cn', 'china eastern': 'ceair.com', 
+  'china southern': 'csair.com', 'hainan': 'hainanairlines.com',
+
+  // Cruises
+  'carnival': 'carnival.com', 'royal caribbean': 'royalcaribbean.com', 
   'norwegian cruise': 'ncl.com', 'princess cruises': 'princess.com',
   'celebrity cruises': 'celebritycruises.com', 'msc': 'msccruisesusa.com',
   'disney cruise': 'disneycruise.disney.go.com', 'holland america': 'hollandamerica.com',
+
+  // Hotels & OTAs
   'marriott': 'marriott.com', 'hilton': 'hilton.com', 'hyatt': 'hyatt.com',
   'ihg': 'ihg.com', 'wyndham': 'wyndhamhotels.com', 'best western': 'bestwestern.com',
   'choice hotels': 'choicehotels.com', 'radisson': 'radissonhotels.com',
@@ -87,14 +116,18 @@ const deriveDomainFromName = (name: string): string => {
   for (const [key, domain] of Object.entries(AIRLINE_DOMAINS)) {
     if (cleanName.includes(key)) return domain;
   }
-  // Trim off common words to leaves the core brand name
+  
+  // Improved derivation logic
   const core = cleanName
-    .replace(/\s*(airlines|airways|air|cruises|hotels|group|resorts|intl|international)\b/g, '')
+    .replace(/\s*(airlines|airways|air|cruises|hotels|group|resorts|intl|international|express|connect|regional)\b/g, '')
     .replace(/[^a-z0-9]/g, '');
+  
   if (core.length > 1) {
     return `${core}.com`;
   }
-  return '';
+  
+  const firstWord = cleanName.split(' ')[0].replace(/[^a-z0-9]/g, '');
+  return firstWord.length > 1 ? `${firstWord}.com` : '';
 };
 
 export default function CreateBooking({ profile }: { profile: any }) {
@@ -239,6 +272,88 @@ export default function CreateBooking({ profile }: { profile: any }) {
   const [logoError, setLogoError] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
 
+  // Contact suggestions (returning customer autofill)
+  const [returningCustomers, setReturningCustomers] = useState<any[]>([]);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
+
+  useEffect(() => {
+    api.get('/bookings', { params: { limit: 500 } })
+      .then(res => {
+        const bookingsList = res.data?.bookings || [];
+        const uniqueClientsMap = new Map<string, any>();
+        
+        // Process bookings list to extract unique customers based on email
+        bookingsList.forEach((b: any) => {
+          const email = b.contactEmail || b.email;
+          if (email && !uniqueClientsMap.has(email.toLowerCase())) {
+            uniqueClientsMap.set(email.toLowerCase(), {
+              email: email,
+              phone: b.contactPhone || b.phone || '',
+              address: b.address || '',
+              city: b.city || '',
+              state: b.state || '',
+              zip: b.zip || '',
+              country: b.country || 'United States',
+              cardHolder: b.cardHolder || b.passengerName || '',
+              passengers: b.passengerDetails || [],
+              crmId: b.crmId || '',
+              pnr: b.pnr || '',
+              passengerName: b.passengerName || ''
+            });
+          }
+        });
+        
+        setReturningCustomers(Array.from(uniqueClientsMap.values()));
+      })
+      .catch(console.error);
+  }, []);
+
+  const handleSelectReturningCustomer = (customer: any) => {
+    setContact({
+      email: customer.email || '',
+      phone: customer.phone || '',
+      address: customer.address || '',
+      city: customer.city || '',
+      state: customer.state || '',
+      zip: customer.zip || '',
+      country: customer.country || 'United States'
+    });
+
+    if (customer.cardHolder) {
+      setPayment(prev => ({ ...prev, ccName: customer.cardHolder }));
+    } else if (customer.passengerName) {
+      setPayment(prev => ({ ...prev, ccName: customer.passengerName }));
+    }
+
+    if (Array.isArray(customer.passengers) && customer.passengers.length > 0) {
+      setPassengers(customer.passengers.map((p: any) => ({
+        id: Date.now() + Math.random().toString(),
+        name: p.name || '',
+        dob: p.dob || '',
+        gender: p.gender || 'Male',
+        ptc: p.ptc || 'ADT',
+        ticketNumber: '', // reset ticket number for a new booking
+        frequentFlyerNumber: p.frequentFlyerNumber || ''
+      })));
+      toast.success(`Autofilled ${customer.passengers.length} passenger(s) and contact details for returning customer: ${customer.cardHolder || customer.email}`);
+    } else {
+      setPassengers([{
+        id: Date.now() + Math.random().toString(),
+        name: customer.cardHolder || customer.passengerName || '',
+        dob: '',
+        gender: 'Male',
+        ptc: 'ADT',
+        ticketNumber: '',
+        frequentFlyerNumber: ''
+      }]);
+      toast.success(`Autofilled contact details and primary passenger for: ${customer.cardHolder || customer.email}`);
+    }
+
+    setCustomerSearch('');
+    setShowCustomerSuggestions(false);
+  };
+
   // Airport search state
   const [originSearch, setOriginSearch] = useState('');
   const [destSearch, setDestSearch] = useState('');
@@ -252,10 +367,12 @@ export default function CreateBooking({ profile }: { profile: any }) {
     if (originSearch.length >= 2) {
       const delay = setTimeout(async () => {
         try {
-          const res = await fetch(`/api/flights/airports?q=${originSearch}`);
+          const res = await fetch(`/api/airports/sync?q=${originSearch}`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('accessToken')}` }
+          });
           if (res.ok) {
             const data = await res.json();
-            setFilteredOriginAirports(data.results || []);
+            setFilteredOriginAirports(Array.isArray(data) ? data : []);
           }
         } catch(e) {}
       }, 300);
@@ -269,10 +386,12 @@ export default function CreateBooking({ profile }: { profile: any }) {
     if (destSearch.length >= 2) {
       const delay = setTimeout(async () => {
         try {
-          const res = await fetch(`/api/flights/airports?q=${destSearch}`);
+          const res = await fetch(`/api/airports/sync?q=${destSearch}`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('accessToken')}` }
+          });
           if (res.ok) {
             const data = await res.json();
-            setFilteredDestAirports(data.results || []);
+            setFilteredDestAirports(Array.isArray(data) ? data : []);
           }
         } catch(e) {}
       }, 300);
@@ -524,7 +643,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
         totalAmount: pricing.total || 0,
         status: bookingStatus || 'pending',
         signatureData: signatureData,
-        cardHolder: payment.ccName || contact.email || 'Valued Customer',
+        cardHolder: payment.ccName || passengers[0]?.name || passengers[0] || contact.email || 'Valued Customer',
         contactEmail: contact.email,
         contactPhone: contact.phone,
       };
@@ -534,6 +653,72 @@ export default function CreateBooking({ profile }: { profile: any }) {
     } catch (err) {
       console.error("Structured report generation failed:", err);
       toast.error('Failed to generate structured PDF report');
+    }
+  };
+
+  const handleDownloadDetailedReport = () => {
+    try {
+      const branding = settings ? {
+        organizationName: settings.organizationName,
+        supportPhone: settings.supportPhone,
+        supportEmail: settings.supportEmail,
+        logoUrl: settings.logoUrl,
+        fullAddress: settings.fullAddress,
+        primaryColor: settings.primaryColor
+      } : undefined;
+
+      const bookingObj = {
+        crmId: crmId || id || 'Draft',
+        airlineName: airlineName || 'Unknown Airline',
+        pnr: pnr || '---',
+        origin: origin || '---',
+        destination: destination || '---',
+        tripType: tripType || 'One-Way',
+        departureDate: departureDate || '---',
+        arrivalDate: arrivalDate || '---',
+        cabinClass: cabinClass || 'Economy',
+        currency: pricing.currency || 'USD',
+        airlineCharges: pricing.airline || 0,
+        serviceFee: pricing.service || 0,
+        totalAmount: pricing.total || 0,
+        status: bookingStatus || 'pending',
+        signatureData: signatureData,
+        cardHolder: payment.ccName || passengers[0]?.name || passengers[0] || contact.email || 'Valued Customer',
+        contactEmail: contact.email,
+        contactPhone: contact.phone,
+        remarks: remarks || '',
+        validatedGateway: validatedGateway || 'SECURED SYSTEM',
+        cardBrand: getCardBrand(payment.ccNumber) || 'CARD',
+        cardNumberMasked: payment.ccNumber ? payment.ccNumber.slice(-4) : '',
+        multiCitySegments: multiCitySegments || [],
+        refundQuote: pricing.refundQuote || 0,
+        refundType: pricing.refundType || 'original',
+        airlineCredits: pricing.airlineCredits || 0,
+      };
+
+      generateBookingReport(bookingObj, passengers, branding);
+      toast.success('Formatted branded PDF report exported successfully');
+    } catch (err) {
+      console.error("Detailed report generation failed:", err);
+      toast.error('Failed to generate formatted branded PDF report');
+    }
+  };
+
+  const handleDownloadAuthVerification = async () => {
+    if (!id) return;
+    try {
+      const response = await api.get(`/bookings/${id}/auth-verification-pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `Auth_Verification_${crmId}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Auth PDF Error:", err);
+      toast.error("Failed to generate Auth Verification PDF");
     }
   };
 
@@ -662,7 +847,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
       }
 
       if (canEditSensitive || addingNewCard) {
-        dataToSave.cardHolder = (payment.ccName || '').toUpperCase();
+        dataToSave.cardHolder = (payment.ccName || passengers[0]?.name || passengers[0] || '').toUpperCase();
         dataToSave.cardNumber = payment.ccNumber;
         dataToSave.cardNumberMasked = payment.ccNumber ? payment.ccNumber.slice(-4) : '';
         dataToSave.expiry = payment.expiry;
@@ -951,9 +1136,32 @@ export default function CreateBooking({ profile }: { profile: any }) {
           </Button>
 
           {id && (
-            <Button className="px-4 py-1.5 bg-blue-600 text-sm font-medium rounded text-white shadow-lg shadow-blue-600/20 h-9 hover:bg-blue-700 transition-all active:scale-95" onClick={handleFinalize} disabled={loading}>
-              Send Auth Email
-            </Button>
+            <>
+              <Button 
+                variant="outline" 
+                className="px-4 py-1.5 border border-indigo-200 dark:border-indigo-800 text-sm font-medium rounded text-indigo-600 dark:text-indigo-400 bg-indigo-50/50 dark:bg-indigo-950/10 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 h-9 transition-all active:scale-95" 
+                onClick={handleDownloadDetailedReport} 
+                disabled={loading}
+              >
+                <Download className="w-4 h-4 mr-2" /> Export PDF Report
+              </Button>
+              
+              {['Admin', 'Superadmin', 'HOD'].includes(profile?.role) && (
+                <Button 
+                  variant="outline" 
+                  className="px-4 py-1.5 border border-emerald-200 dark:border-emerald-800 text-sm font-medium rounded text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/10 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 h-9 transition-all active:scale-95" 
+                  onClick={handleDownloadAuthVerification} 
+                  disabled={loading || !['authorized', 'email auth confirm', 'ready to charge', 'sent for charge', 'charged', 'chargeback'].includes(bookingStatus?.toLowerCase())}
+                  title="Verified Authorization Certificate with Signature & Audit Trail"
+                >
+                  <Shield className="w-4 h-4 mr-2" /> Auth Proof
+                </Button>
+              )}
+
+              <Button className="px-4 py-1.5 bg-blue-600 text-sm font-medium rounded text-white shadow-lg shadow-blue-600/20 h-9 hover:bg-blue-700 transition-all active:scale-95" onClick={handleFinalize} disabled={loading}>
+                Send Auth Email
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -1048,6 +1256,101 @@ export default function CreateBooking({ profile }: { profile: any }) {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 -mt-2">
         {/* Form Sections */}
         <div className="lg:col-span-7 space-y-6 w-full">
+          {/* Returning Customer Quick-Fill Tool */}
+          {!id && returningCustomers.length > 0 && (
+            <div className="relative bg-gradient-to-r from-blue-50/70 to-indigo-50/50 dark:from-slate-800/40 dark:to-slate-800/20 border border-blue-100/70 dark:border-slate-800/80 rounded-2xl p-5 shadow-sm transition-all hover:shadow-md">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white">
+                  <UserPlus className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">Returning Customer Quick-Fill</h4>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Search previously created bookings to autofill contact & passenger details instantly.</p>
+                </div>
+              </div>
+              
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                  <Search className="h-4 w-4 text-slate-400" />
+                </div>
+                <input
+                  type="text"
+                  value={customerSearch}
+                  onChange={(e) => {
+                    setCustomerSearch(e.target.value);
+                    setShowCustomerSuggestions(true);
+                  }}
+                  onFocus={() => setShowCustomerSuggestions(true)}
+                  placeholder="Enter name, email, or phone of returning customer..."
+                  className="w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-xl pl-10 pr-4 py-2.5 text-xs focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 focus:border-blue-500 outline-none transition-all shadow-inner"
+                />
+                
+                {showCustomerSuggestions && customerSearch.trim() !== '' && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-30" 
+                      onClick={() => setShowCustomerSuggestions(false)} 
+                    />
+                    <div className="absolute left-0 right-0 mt-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl max-h-60 overflow-y-auto z-40 divide-y divide-slate-100 dark:divide-slate-800/50">
+                      {(() => {
+                        const filtered = returningCustomers.filter(c => {
+                          const s = customerSearch.toLowerCase();
+                          return (
+                            (c.cardHolder && c.cardHolder.toLowerCase().includes(s)) ||
+                            (c.email && c.email.toLowerCase().includes(s)) ||
+                            (c.phone && c.phone.includes(s)) ||
+                            (c.passengerName && c.passengerName.toLowerCase().includes(s))
+                          );
+                        });
+                        
+                        if (filtered.length === 0) {
+                          return (
+                            <div className="p-4 text-xs text-slate-400 text-center">
+                              No matching returning customers found.
+                            </div>
+                          );
+                        }
+                        
+                        return filtered.map((c, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => handleSelectReturningCustomer(c)}
+                            className="w-full text-left p-3.5 hover:bg-blue-50/50 dark:hover:bg-slate-800/50 flex flex-col gap-1 transition-colors"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                                {c.cardHolder || c.passengerName || 'Unknown Customer'}
+                              </span>
+                              <span className="text-[9px] px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-semibold rounded uppercase tracking-wider">
+                                Last PNR: {c.pnr || 'N/A'}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-500 dark:text-slate-400 font-medium mt-0.5">
+                              <span className="flex items-center gap-1.5">
+                                <Mail className="w-3 h-3 text-slate-400" /> {c.email}
+                              </span>
+                              {c.phone && (
+                                <span className="flex items-center gap-1.5">
+                                  <Contact className="w-3 h-3 text-slate-400" /> {c.phone}
+                                </span>
+                              )}
+                            </div>
+                            {c.passengers && c.passengers.length > 0 && (
+                              <div className="text-[9px] text-blue-600 dark:text-blue-400 font-semibold mt-1 bg-blue-50/50 dark:bg-blue-950/20 px-2 py-1 rounded border border-blue-100/30 dark:border-blue-900/10">
+                                Pax Manifest: {c.passengers.map((p: any) => p.name).join(', ')}
+                              </div>
+                            )}
+                          </button>
+                        ));
+                      })()}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <div className="flex border-b border-slate-200 gap-8 mb-6 overflow-x-auto pb-px scrollbar-hide">
               {['personal', 'contact', 'package', 'financials', 'remarks'].filter(t => t !== 'remarks' || id).map((tab) => (
@@ -1489,21 +1792,30 @@ export default function CreateBooking({ profile }: { profile: any }) {
                         <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 pointer-events-none" />
                       </div>
                       
-                      {showOriginResults && (originSearch || origin) && (
+                       {showOriginResults && (originSearch || origin) && (
                         <div className="absolute z-50 w-full mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                           {filteredOriginAirports.map(a => (
                             <button 
-                              key={a.iata} 
+                              key={a.code} 
                               className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-between group"
                               onClick={() => {
-                                setOrigin(a.iata);
-                                setOriginSearch(a.iata);
+                                setOrigin(a.code);
+                                setOriginSearch(a.code);
                                 setShowOriginResults(false);
                               }}
                             >
                                <div className="flex flex-col">
-                                 <span className="text-xs font-black text-slate-900 dark:text-slate-100 uppercase">{a.iata}</span>
-                                 <span className="text-[10px] text-slate-400 font-bold uppercase">{a.name}</span>
+                                 <div className="flex items-center gap-2">
+                                   <span className="text-xs font-black text-slate-900 dark:text-slate-100 uppercase">
+                                     {highlightMatch(a.code, originSearch)}
+                                   </span>
+                                   <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold uppercase">
+                                     {highlightMatch(a.city, originSearch)}
+                                   </span>
+                                 </div>
+                                 <span className="text-[10px] text-slate-400 font-medium uppercase truncate max-w-[200px]">
+                                   {highlightMatch(a.name, originSearch)}
+                                 </span>
                                </div>
                                <ChevronRight className="w-3 h-3 text-slate-200 group-hover:text-blue-500 transition-all" />
                             </button>
@@ -1537,17 +1849,26 @@ export default function CreateBooking({ profile }: { profile: any }) {
                         <div className="absolute z-50 w-full mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                           {filteredDestAirports.map(a => (
                             <button 
-                              key={a.iata} 
+                              key={a.code} 
                               className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-between group"
                               onClick={() => {
-                                setDestination(a.iata);
-                                setDestSearch(a.iata);
+                                setDestination(a.code);
+                                setDestSearch(a.code);
                                 setShowDestResults(false);
                               }}
                             >
                                <div className="flex flex-col">
-                                 <span className="text-xs font-black text-slate-900 dark:text-slate-100 uppercase">{a.iata}</span>
-                                 <span className="text-[10px] text-slate-400 font-bold uppercase">{a.name}</span>
+                                 <div className="flex items-center gap-2">
+                                   <span className="text-xs font-black text-slate-900 dark:text-slate-100 uppercase">
+                                     {highlightMatch(a.code, destSearch)}
+                                   </span>
+                                   <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold uppercase">
+                                     {highlightMatch(a.city, destSearch)}
+                                   </span>
+                                 </div>
+                                 <span className="text-[10px] text-slate-400 font-medium uppercase truncate max-w-[200px]">
+                                   {highlightMatch(a.name, destSearch)}
+                                 </span>
                                </div>
                                <ChevronRight className="w-3 h-3 text-slate-200 group-hover:text-blue-500 transition-all" />
                             </button>
@@ -1770,7 +2091,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
                         <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 block">
                           {emailTemplateType === 'cancel' ? 'Cancellation Fee' :
                            emailTemplateType === 'changes' ? 'Changes Fee' :
-                           emailTemplateType === 'refund' ? 'Refund Issuance Fee' : 'Service Fee'}
+                           emailTemplateType === 'refund' ? 'Refund Issuance Fee' : 'Taxes & Fees'}
                         </label>
                         <div className="relative">
                           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-black">{pricing.currency}</span>
@@ -1897,12 +2218,17 @@ export default function CreateBooking({ profile }: { profile: any }) {
                       onChange={(e) => setPayment({...payment, ccName: e.target.value.replace(/[^a-zA-Z\s]/g, '').toUpperCase()})}
                       className="bg-slate-50/50 border-slate-200 dark:border-slate-800 font-bold tracking-widest text-xs h-11 uppercase"
                     />
-                    <Input 
-                      placeholder="CARD NUMBER" 
-                      value={payment.ccNumber}
-                      onChange={handleCCNumberChange}
-                      className="bg-slate-50/50 border-slate-200 dark:border-slate-800 font-mono tracking-[0.2em] text-xs h-11"
-                    />
+                    <div className="relative">
+                      <Input 
+                        placeholder="CARD NUMBER" 
+                        value={payment.ccNumber}
+                        onChange={handleCCNumberChange}
+                        className="bg-slate-50/50 border-slate-200 dark:border-slate-800 font-mono tracking-[0.2em] text-xs h-11 pr-12"
+                      />
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center">
+                        {getCardBrandIcon(detectBrand(payment.ccNumber), "w-6 h-6")}
+                      </div>
+                    </div>
                     <div className="grid grid-cols-2 gap-4">
                       <Input 
                         type="text"
@@ -1924,12 +2250,13 @@ export default function CreateBooking({ profile }: { profile: any }) {
 
                   <div className="pt-4 flex items-center justify-between">
                      <div className="flex gap-2">
-                       {['Visa', 'Mastercard', 'American Express'].map(b => (
+                       {['Visa', 'Mastercard', 'American Express', 'Discover'].map(b => (
                          <div key={b} className={cn(
-                           "px-3 py-1 rounded-md text-[9px] font-black uppercase tracking-widest border transition-all",
-                           detectBrand(payment.ccNumber) === b ? "bg-blue-600 text-white border-blue-600" : "bg-slate-50 text-slate-300 border-slate-100 opacity-50"
+                           "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-widest border transition-all",
+                           detectBrand(payment.ccNumber) === b ? "bg-blue-600 text-white border-blue-600 scale-105 shadow-sm" : "bg-slate-50 text-slate-300 border-slate-100 dark:bg-slate-900/40 dark:border-slate-800 opacity-50"
                          )}>
-                           {b === 'American Express' ? 'AMEX' : b.toUpperCase()}
+                           {getCardBrandIcon(b, "w-4 h-4")}
+                           <span>{b === 'American Express' ? 'AMEX' : b.toUpperCase()}</span>
                          </div>
                        ))}
                      </div>
@@ -2065,7 +2392,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
                     </div>
                     <div className="flex flex-col gap-1 pl-8 border-l border-slate-200">
                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em]">Validated Gateway</span>
-                         <span className="text-xs font-black text-blue-600 uppercase tracking-wider">{airlineName || 'SKYWAY CENTRAL'}</span>
+                         <span className="text-xs font-black text-blue-600 uppercase tracking-wider">{validatedGateway || 'PENDING'}</span>
                     </div>
                 </div>
               </div>

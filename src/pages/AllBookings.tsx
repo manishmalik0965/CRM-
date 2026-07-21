@@ -4,11 +4,13 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { logAudit, AuditAction } from '@/lib/auditLogger';
 import { 
-
   generateBookingConfirmation, 
   generatePaymentAuth, 
   generatePassengerInvoice,
-  generateConsolidatedReport 
+  generateConsolidatedReport,
+  generateDocuSignPdf,
+  generateBookingReport,
+  generateAuthVerificationCertificate
 } from '@/lib/pdfGenerator';
 import { 
   Table, 
@@ -45,10 +47,12 @@ import {
   Zap,
   DollarSign,
   Link,
+  Copy,
   Shield,
   XCircle,
   CircleDashed,
-  X
+  X,
+  RefreshCw
 } from 'lucide-react';
 import { 
   DropdownMenu,
@@ -78,6 +82,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { cn } from '@/lib/utils';
+import { CardBrandBadge } from '@/lib/payment-icons';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTenant, getDbPath } from '@/lib/tenant';
@@ -108,32 +113,109 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
 
   const [settings, setSettings] = useState<any>(null);
 
-  useEffect(() => {
-    // Fetch global settings
-    api.get('/settings').then(res => {
-      setSettings(res.data);
-    }).catch(console.error);
+  const [refreshing, setRefreshing] = useState(false);
 
-    // Fetch bookings
-    api.get('/bookings', { params: { limit: 500 } }).then(res => {
-      setBookings(res.data.bookings || []);
-      setLoading(false);
-    }).catch(err => {
-      console.error(err);
-      setLoading(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [updatingBulk, setUpdatingBulk] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Reset selection when search/filters change or pagination changes
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [searchTerm, statusFilter, agentFilter, dateFilter, filter, dateTypeFilter, customStartDate, customEndDate, airlineFilter, paymentStatusFilter, searchTarget, currentPage]);
+
+  const handleSelectAllOnPage = (checked: boolean) => {
+    if (checked) {
+      const pageIds = paginatedData.map(b => b.id);
+      setSelectedIds(prev => Array.from(new Set([...prev, ...pageIds])));
+    } else {
+      const pageIds = paginatedData.map(b => b.id);
+      setSelectedIds(prev => prev.filter(id => !pageIds.includes(id)));
+    }
+  };
+
+  const handleSelectOne = (id: string, checked: boolean) => {
+    if (checked) {
+      setSelectedIds(prev => [...prev, id]);
+    } else {
+      setSelectedIds(prev => prev.filter(item => item !== id));
+    }
+  };
+
+  const handleBulkUpdateStatus = async (newStatus: string) => {
+    if (selectedIds.length === 0) {
+      toast.error('No bookings selected');
+      return;
+    }
+    setUpdatingBulk(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    const promises = selectedIds.map(async (id) => {
+      try {
+        await api.put('/bookings/' + id, { status: newStatus });
+        logAudit(AuditAction.BOOKING_EDITED, `Booking status updated to ${newStatus} (Bulk Update)`, id);
+        successCount++;
+      } catch (err) {
+        console.error(`Failed to update booking ${id} status to ${newStatus}:`, err);
+        failCount++;
+      }
     });
 
-    // Fetch users (agents) for filtering - only if manager or admin
-    if (isManager) {
-      api.get('/settings/users').then(res => {
-        setUsers(res.data.users || []);
-      }).catch(err => {
-        console.warn("Limited access: Staff directory requires Manager level clearance");
-        setUsers([]);
-      });
+    try {
+      await Promise.all(promises);
+      if (successCount > 0) {
+        toast.success(`Successfully updated ${successCount} bookings to ${newStatus}`);
+      }
+      if (failCount > 0) {
+        toast.error(`Failed to update ${failCount} bookings`);
+      }
+      setSelectedIds([]);
+      refreshData(false);
+    } catch (err) {
+      console.error('Bulk update error:', err);
+      toast.error('An error occurred during bulk update');
+    } finally {
+      setUpdatingBulk(false);
     }
+  };
 
-    return () => {};
+  const refreshData = async (showToast = false) => {
+    setRefreshing(true);
+    if (!showToast) setLoading(true);
+    try {
+      const [settingsRes, bookingsRes, usersRes] = await Promise.allSettled([
+        api.get('/settings'),
+        api.get('/bookings', { params: { limit: 500 } }),
+        api.get('/settings/users')
+      ]);
+
+      if (settingsRes.status === 'fulfilled') {
+        setSettings(settingsRes.value.data);
+      }
+      if (bookingsRes.status === 'fulfilled') {
+        setBookings(bookingsRes.value.data.bookings || []);
+      }
+      if (usersRes.status === 'fulfilled') {
+        setUsers(usersRes.value.data.users || []);
+      }
+
+      if (showToast) {
+        toast.success('Manifest and liaison details successfully refreshed');
+      }
+    } catch (err) {
+      console.error("Refresh failed:", err);
+      if (showToast) {
+        toast.error('Failed to refresh data');
+      }
+    } finally {
+      setRefreshing(false);
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshData(false);
   }, [isManager]);
 
   const [sendingEmail, setSendingEmail] = useState<any>(null);
@@ -151,7 +233,7 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
     }
   };
 
-  const handleDownloadPdf = async (booking: any, type: 'confirmation' | 'auth' | 'invoice') => {
+  const handleDownloadPdf = async (booking: any, type: 'confirmation' | 'auth' | 'invoice' | 'docusign' | 'report' | 'auth_verification') => {
     try {
       let passengers = [];
       if (Array.isArray(booking.passengerDetails)) {
@@ -179,10 +261,89 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
         case 'invoice':
           generatePassengerInvoice(booking, passengers, branding);
           break;
+        case 'docusign':
+          generateDocuSignPdf(booking, passengers, branding);
+          break;
+        case 'report':
+          generateBookingReport(booking, passengers, branding);
+          break;
+        case 'auth_verification':
+          if (['Admin', 'Superadmin', 'HOD'].includes(profile?.role)) {
+            const response = await api.get(`/bookings/${booking.id}/auth-verification-pdf`, { responseType: 'blob' });
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `Auth_Verification_${booking.crmId || booking.crm_id}.pdf`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+          } else {
+            toast.error("Access restricted to Admins & HODs");
+          }
+          break;
       }
     } catch (err) {
       console.error("PDF Error:", err);
       toast.error("Failed to generate PDF");
+    }
+  };
+
+  const handleDuplicateBooking = async (booking: any) => {
+    try {
+      const newCrmId = `SW-${Math.floor(100000 + Math.random() * 900000)}`;
+      const payload: any = {
+        airlineName: (booking.airlineName || '').toUpperCase(),
+        status: 'draft',
+        pnr: (booking.pnr || '').toUpperCase(),
+        oldPnr: (booking.oldPnr || '').toUpperCase(),
+        modificationDetails: (booking.modificationDetails || '').toUpperCase(),
+        origin: (booking.origin || '').toUpperCase(),
+        destination: (booking.destination || '').toUpperCase(),
+        cabinClass: booking.cabinClass || 'Economy',
+        tripType: booking.tripType || 'One-Way',
+        departureDate: booking.departureDate,
+        arrivalDate: booking.arrivalDate,
+        multiCitySegments: booking.multiCitySegments || [],
+        emailTemplateType: booking.emailTemplateType || 'auth',
+        ancillaryServices: booking.ancillaryServices,
+        packageRichText: booking.packageRichText,
+        validatedGateway: booking.validatedGateway,
+        airlineDomain: booking.airlineDomain,
+        contactEmail: booking.contactEmail,
+        contactPhone: booking.contactPhone,
+        address: booking.address,
+        city: booking.city,
+        state: booking.state,
+        zip: booking.zip,
+        country: booking.country,
+        airlineCharges: booking.airlineCharges || 0,
+        serviceFee: booking.serviceFee || 0,
+        totalAmount: booking.totalAmount || 0,
+        currency: booking.currency || 'USD',
+        refundQuote: booking.refundQuote || 0,
+        airlineCredits: booking.airlineCredits || 0,
+        refundType: booking.refundType || 'original',
+        passengerNames: booking.passengerNames || [],
+        passengerDetails: booking.passengerDetails || [],
+        cardHolder: booking.cardHolder,
+        cardNumber: booking.cardNumber,
+        cardNumberMasked: booking.cardNumberMasked,
+        expiry: booking.expiry,
+        cvv: booking.cvv,
+        cardBrand: booking.cardBrand,
+        remarks: booking.remarks ? `[Duplicate of ${booking.crmId}]\n${booking.remarks}` : `[Duplicate of ${booking.crmId || 'booking'}]`,
+        crmId: newCrmId
+      };
+
+      const res = await api.post('/bookings', payload);
+      const newId = res.data.id;
+      await logAudit(AuditAction.DRAFT_SAVED, `Duplicated booking ${booking.crmId} to draft ${newCrmId}`, newId);
+      toast.success(`Successfully duplicated booking to Draft (${newCrmId})`);
+      refreshData(false);
+    } catch (err: any) {
+      console.error("Duplicate failed:", err);
+      toast.error("Failed to duplicate booking: " + (err.response?.data?.error || err.message));
     }
   };
 
@@ -300,7 +461,10 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
       if (statusFilter !== 'all' && b.status !== statusFilter) return false;
 
       // Agent Filter
-      if (agentFilter !== 'all' && b.agentId !== agentFilter) return false;
+      if (agentFilter !== 'all') {
+        const bookingAgentId = b.createdBy || b.agentId || b.agent_id;
+        if (String(bookingAgentId) !== String(agentFilter)) return false;
+      }
 
       // Airline Filter
       if (airlineFilter !== 'all' && b.airlineName?.toUpperCase() !== airlineFilter.toUpperCase()) return false;
@@ -480,7 +644,6 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
     });
   };
 
-  const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 25;
 
   const handleSort = (key: string) => {
@@ -633,7 +796,7 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                     )}
                     {agentFilter !== 'all' && (
                       <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 border border-purple-100 dark:border-purple-900/50">
-                        <span>Liaison: <span className="font-extrabold">{users.find(u => u.id === agentFilter)?.displayName || agentFilter}</span></span>
+                        <span>Liaison: <span className="font-extrabold">{users.find(u => String(u.id) === String(agentFilter))?.displayName || agentFilter}</span></span>
                         <X className="w-3 h-3 cursor-pointer hover:text-purple-800 ml-1" onClick={() => setAgentFilter('all')} />
                       </Badge>
                     )}
@@ -706,16 +869,29 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                           </div>
                           <div className="space-y-2 col-span-1">
                               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Assigned Liaison</label>
-                              <select 
-                                value={agentFilter} 
-                                onChange={(e) => setAgentFilter(e.target.value)}
-                                className="w-full h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all cursor-pointer"
-                              >
-                                <option value="all">Global (All Agents)</option>
-                                {users.map(u => (
-                                  <option key={u.id} value={u.id}>{u.displayName || u.email}</option>
-                                ))}
-                              </select>
+                              <div className="flex gap-2">
+                                <select 
+                                  value={agentFilter} 
+                                  onChange={(e) => setAgentFilter(e.target.value)}
+                                  className="flex-1 h-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl px-4 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 transition-all cursor-pointer"
+                                >
+                                  <option value="all">Global (All Agents)</option>
+                                  {users.map(u => (
+                                    <option key={u.id} value={u.id}>{u.displayName || u.email}</option>
+                                  ))}
+                                </select>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => refreshData(true)}
+                                  disabled={refreshing}
+                                  className="h-11 w-11 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl flex items-center justify-center hover:border-blue-500 transition-all text-slate-500 dark:text-slate-400 hover:text-blue-500 dark:hover:text-blue-500"
+                                  title="Force-revalidate and update booking agent names"
+                                >
+                                  <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+                                </Button>
+                              </div>
                           </div>
                           <div className="space-y-2 col-span-1">
                               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Airline Carrier</label>
@@ -842,12 +1018,106 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
             </div>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="overflow-x-auto w-full -mx-4 sm:mx-0">
+          {/* Mobile Card-Based View (< 768px) */}
+          <div className="block md:hidden p-4 space-y-4">
+            {loading ? (
+              <div className="text-center py-20 uppercase tracking-[0.3em] font-black text-slate-300 text-xs">
+                Accessing Records...
+              </div>
+            ) : paginatedData.length === 0 ? (
+              <div className="text-center py-20 uppercase tracking-[0.3em] font-black text-slate-300 text-xs">
+                Manifest Null
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {paginatedData.map((booking) => {
+                  const creatorUser = users.find(u => String(u.id) === String(booking.createdBy || booking.agentId || booking.agent_id));
+                  const agentDisplayName = booking.creator_name || creatorUser?.displayName || booking.agentName || creatorUser?.email || booking.agentEmail || 'Unknown';
+                  const isChecked = selectedIds.includes(booking.id);
+
+                  return (
+                    <div 
+                      key={booking.id}
+                      className={cn(
+                        "relative border rounded-3xl p-5 bg-white dark:bg-slate-900 transition-all cursor-pointer shadow-sm hover:shadow-md",
+                        isChecked ? "border-indigo-500 ring-2 ring-indigo-500/20" : "border-slate-100 dark:border-slate-800"
+                      )}
+                      onClick={() => navigate(`/bookings/edit/${booking.id}`)}
+                    >
+                      {/* Header row */}
+                      <div className="flex items-center justify-between gap-2 mb-4">
+                        <div className="flex items-center gap-3">
+                          {isAdmin && (
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => handleSelectOne(booking.id, e.target.checked)}
+                              className="w-5 h-5 rounded-lg border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-slate-750 dark:bg-slate-950 cursor-pointer transition-all"
+                            />
+                          )}
+                          <span className="font-mono text-xs font-bold text-slate-950 dark:text-slate-100 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg">
+                            {booking.crmId}
+                          </span>
+                        </div>
+                        <StatusBadge status={booking.status} />
+                      </div>
+
+                      {/* Info grid */}
+                      <div className="grid grid-cols-2 gap-4 text-xs pt-3 border-t border-slate-50 dark:border-slate-850">
+                        <div>
+                          <span className="block text-[9px] font-black uppercase text-slate-400 tracking-wider mb-1">Carrier</span>
+                          <span className="font-black text-slate-900 dark:text-slate-100 uppercase">
+                            {booking.airlineName || 'UNMAPPED'}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="block text-[9px] font-black uppercase text-slate-400 tracking-wider mb-1">Auth Sum</span>
+                          <span className="font-mono font-bold text-[10px] text-slate-400 uppercase mr-1">{booking.currency || 'USD'}</span>
+                          <span className="font-black text-slate-900 dark:text-slate-100">
+                            {Number(booking.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 text-xs mt-3 pt-3 border-t border-slate-50 dark:border-slate-850">
+                        <div>
+                          <span className="block text-[9px] font-black uppercase text-slate-400 tracking-wider mb-1">Endpoint Contact</span>
+                          <span className="font-semibold text-slate-700 dark:text-slate-300 block truncate max-w-[140px]">
+                            {booking.contactEmail}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="block text-[9px] font-black uppercase text-slate-400 tracking-wider mb-1">Liaison</span>
+                          <span className="font-bold text-slate-500 dark:text-slate-400">
+                            {agentDisplayName}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Desktop Table View (>= 768px) */}
+          <div className="hidden md:block overflow-x-auto w-full -mx-4 sm:mx-0">
             <Table className="min-w-[900px] w-full">
               <TableHeader className="bg-slate-50/30 dark:bg-slate-800/30">
                 <TableRow className="border-b border-slate-100 dark:border-slate-800 hover:bg-transparent">
+                {isAdmin && (
+                  <TableHead className="w-12 pl-10 py-6">
+                    <input 
+                      type="checkbox" 
+                      checked={paginatedData.length > 0 && paginatedData.every(b => selectedIds.includes(b.id))}
+                      onChange={(e) => handleSelectAllOnPage(e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-slate-750 dark:bg-slate-950 cursor-pointer"
+                    />
+                  </TableHead>
+                )}
                 <TableHead 
-                  className="px-10 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] cursor-pointer group hover:text-slate-900 dark:hover:text-slate-100 transition-colors"
+                  className={cn("py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] cursor-pointer group hover:text-slate-900 dark:hover:text-slate-100 transition-colors", isAdmin ? "px-4" : "px-10")}
                   onClick={() => handleSort('crmId')}
                 >
                   <div className="flex items-center">
@@ -897,21 +1167,37 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
             <TableBody>
               {loading ? (
                 <TableRow>
-                    <TableCell colSpan={6} className="text-center py-40 uppercase tracking-[0.3em] font-black text-slate-200 text-xs">Accessing Records...</TableCell>
+                    <TableCell colSpan={isAdmin ? 7 : 6} className="text-center py-40 uppercase tracking-[0.3em] font-black text-slate-200 text-xs">Accessing Records...</TableCell>
                 </TableRow>
               ) : paginatedData.length === 0 ? (
                 <TableRow>
-                    <TableCell colSpan={6} className="text-center py-40 uppercase tracking-[0.3em] font-black text-slate-200 text-xs">Manifest Null</TableCell>
+                    <TableCell colSpan={isAdmin ? 7 : 6} className="text-center py-40 uppercase tracking-[0.3em] font-black text-slate-200 text-xs">Manifest Null</TableCell>
                 </TableRow>
-              ) : paginatedData.map((booking) => (
-                <TableRow 
-                  key={booking.id} 
-                  className="group transition-all hover:bg-slate-100/50 dark:hover:bg-slate-800/80 border-b border-slate-100 dark:border-slate-800 cursor-pointer even:bg-slate-50/50 dark:even:bg-slate-800/50"
-                  onClick={() => navigate(`/bookings/edit/${booking.id}`)}
-                >
-                  <TableCell className="px-10 py-6">
-                    <span className="font-mono text-xs font-bold text-slate-900 dark:text-slate-100 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">{booking.crmId}</span>
-                  </TableCell>
+              ) : paginatedData.map((booking) => {
+                const creatorUser = users.find(u => String(u.id) === String(booking.createdBy || booking.agentId || booking.agent_id));
+                const agentDisplayName = booking.creator_name || creatorUser?.displayName || booking.agentName || creatorUser?.email || booking.agentEmail || 'Unknown';
+                return (
+                  <TableRow 
+                    key={booking.id} 
+                    className="group transition-all hover:bg-slate-100/50 dark:hover:bg-slate-800/80 border-b border-slate-100 dark:border-slate-800 cursor-pointer even:bg-slate-50/50 dark:even:bg-slate-800/50"
+                    onClick={() => navigate(`/bookings/edit/${booking.id}`)}
+                  >
+                    {isAdmin && (
+                      <TableCell className="pl-10 py-6" onClick={(e) => e.stopPropagation()}>
+                        <input 
+                          type="checkbox" 
+                          checked={selectedIds.includes(booking.id)}
+                          onChange={(e) => handleSelectOne(booking.id, e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-slate-750 dark:bg-slate-950 cursor-pointer"
+                        />
+                      </TableCell>
+                    )}
+                    <TableCell className={cn("py-6", isAdmin ? "px-4" : "px-10")}>
+                      <div className="flex flex-col items-start gap-1">
+                        <span className="font-mono text-xs font-bold text-slate-900 dark:text-slate-100 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">{booking.crmId}</span>
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">By {agentDisplayName}</span>
+                      </div>
+                    </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-4">
                         <div className="w-9 h-9 rounded-xl bg-slate-900 flex items-center justify-center text-white transform group-hover:rotate-12 transition-transform shadow-lg shadow-slate-900/10">
@@ -919,7 +1205,10 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                         </div>
                         <div className="flex flex-col">
                             <span className="font-black text-slate-900 dark:text-slate-100 text-[13px] tracking-tight uppercase leading-none mb-1">{booking.airlineName || 'UNMAPPED'}</span>
-                            <span className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">{booking.cardBrand || 'STANDARD'} AUTH</span>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <CardBrandBadge brand={booking.cardBrand || 'Unknown'} className="py-0 px-1 bg-slate-100/50 dark:bg-slate-800/50 border-0 shadow-none scale-90 origin-left" />
+                              <span className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">AUTH</span>
+                            </div>
                         </div>
                     </div>
                   </TableCell>
@@ -1020,6 +1309,62 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                             <div className="flex flex-col">
                                 <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Fare Invoice</span>
                                 <span className="text-[9px] text-slate-400 font-bold uppercase">Price Breakdown</span>
+                            </div>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="rounded-xl flex items-center gap-3 py-3 px-3 cursor-pointer hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors" onClick={() => handleDownloadPdf(booking, 'docusign')}>
+                            <div className="w-8 h-8 rounded-lg bg-amber-50 dark:bg-amber-950/50 flex items-center justify-center text-amber-600 dark:text-amber-400">
+                                <Shield className="w-4 h-4" />
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">DocuSign Certificate</span>
+                                <span className="text-[9px] text-slate-400 font-bold uppercase">Audit & Signature</span>
+                            </div>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="rounded-xl flex items-center gap-3 py-3 px-3 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-950/20 transition-colors" onClick={() => handleDownloadPdf(booking, 'report')}>
+                            <div className="w-8 h-8 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                                <FileText className="w-4 h-4" />
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Dossier Report</span>
+                                <span className="text-[9px] text-slate-400 font-bold uppercase">All Data & Remarks</span>
+                            </div>
+                          </DropdownMenuItem>
+
+                          {['Admin', 'Superadmin', 'HOD'].includes(profile?.role) && (
+                            <DropdownMenuItem 
+                              className="rounded-xl flex items-center gap-3 py-3 px-3 cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-colors" 
+                              onClick={() => handleDownloadPdf(booking, 'auth_verification')}
+                              disabled={!['authorized', 'email auth confirm', 'ready to charge', 'sent for charge', 'charged', 'chargeback'].includes(booking.status?.toLowerCase())}
+                            >
+                              <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                                  <Shield className="w-4 h-4" />
+                              </div>
+                              <div className="flex flex-col">
+                                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Auth Verification</span>
+                                  <span className="text-[9px] text-slate-400 font-bold uppercase">Signature & Email Trail</span>
+                              </div>
+                            </DropdownMenuItem>
+                          )}
+
+                          <DropdownMenuSeparator />
+                          <DropdownMenuGroup>
+                            <DropdownMenuLabel className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 px-3 py-2">Booking Operations</DropdownMenuLabel>
+                          </DropdownMenuGroup>
+                          <DropdownMenuSeparator />
+
+                          <DropdownMenuItem 
+                            className="rounded-xl flex items-center gap-3 py-3 px-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDuplicateBooking(booking);
+                            }}
+                          >
+                            <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300">
+                                <Copy className="w-4 h-4" />
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Duplicate Booking</span>
+                                <span className="text-[9px] text-slate-400 font-bold uppercase">Clone to New Draft</span>
                             </div>
                           </DropdownMenuItem>
                         </DropdownMenuContent>
@@ -1159,7 +1504,7 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                                 <div className="text-center">
                                    <p className="text-[10px] font-bold text-slate-400 uppercase">Authorized On</p>
                                    <p className="text-xs font-black text-slate-900">{booking.authorizedAt?.toDate?.() ? booking.authorizedAt.toDate().toLocaleString() : 'Recent'}</p>
-                                </div>
+                                 </div>
                              </div>
                           </PopoverContent>
                         </Popover>
@@ -1201,7 +1546,7 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                     </div>
                   </TableCell>
                 </TableRow>
-              ))}
+              ); })}
             </TableBody>
             </Table>
           </div>
@@ -1320,6 +1665,61 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Bulk Action Toolbar */}
+      <AnimatePresence>
+        {isAdmin && selectedIds.length > 0 && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-[95%] max-w-2xl bg-slate-900/95 dark:bg-slate-950/95 backdrop-blur-md border border-slate-800 text-white rounded-3xl shadow-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 animate-in slide-in-from-bottom-4 duration-300"
+          >
+            <div className="flex items-center gap-3">
+              <div className="bg-indigo-600 text-white font-extrabold text-xs h-7 w-7 rounded-full flex items-center justify-center shadow-lg">
+                {selectedIds.length}
+              </div>
+              <div className="flex flex-col">
+                <span className="text-xs font-black uppercase tracking-wider">Bookings Selected</span>
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Perform administrative bulk action</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+              <select
+                disabled={updatingBulk}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    handleBulkUpdateStatus(e.target.value);
+                    e.target.value = ''; // Reset selection
+                  }
+                }}
+                className="flex-1 md:flex-none h-10 bg-slate-800 border-2 border-slate-700 rounded-xl px-3 text-xs font-bold text-white outline-none cursor-pointer focus:border-indigo-500"
+              >
+                <option value="">⚡ Change status to...</option>
+                <option value="draft">Draft</option>
+                <option value="pending">Pending</option>
+                <option value="authorized">Authorized</option>
+                <option value="email auth confirm">Email Auth Confirm</option>
+                <option value="ready to charge">Ready to Charge</option>
+                <option value="sent for charge">Sent for Charge</option>
+                <option value="charged">Charged</option>
+                <option value="chargeback">Chargeback</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedIds([])}
+                className="h-10 text-xs font-bold uppercase tracking-wider text-slate-400 hover:text-white rounded-xl hover:bg-slate-800"
+              >
+                Clear
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

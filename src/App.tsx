@@ -10,20 +10,33 @@ import {
   Menu,
   X,
   Check,
-  CheckCircle2
+  CheckCircle2,
+  PlusCircle,
+  FileEdit,
+  Calendar,
+  Mail,
+  Users,
+  BarChart3,
+  Activity,
+  Settings as SettingsIcon,
+  Database,
+  Building,
+  Download,
+  LayoutDashboard,
+  Keyboard
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
-const LazyIcon = React.lazy(async () => {
-  const lucide = await import('lucide-react');
-  return {
-    default: ({ name, ...props }: { name: keyof typeof lucide, [key: string]: any }) => {
-      const Icon = lucide[name] as React.ElementType;
-      return Icon ? <Icon {...props} /> : null;
-    }
+const Icon = ({ name, ...props }: { name: string, [key: string]: any }) => {
+  const icons: Record<string, any> = {
+    LogOut, Search, Bell, Moon, Sun, Plane, Menu, X, Check, CheckCircle2,
+    PlusCircle, FileEdit, Calendar, Mail, Users, BarChart3, Activity,
+    Settings: SettingsIcon, Database, Building, Download, LayoutDashboard, Keyboard
   };
-});
+  const LucideIcon = icons[name];
+  return LucideIcon ? <LucideIcon {...props} /> : null;
+};
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
@@ -35,17 +48,20 @@ import { useAuth } from '@/context/AuthContext';
 import { api } from '@/lib/api';
 
 // Pages
-const Dashboard = React.lazy(() => import('./pages/Dashboard'));
-const CreateBooking = React.lazy(() => import('./pages/CreateBooking'));
-const AllBookings = React.lazy(() => import('./pages/AllBookings'));
-const AuthorizationPage = React.lazy(() => import('./pages/AuthorizationPage'));
-const LoginPage = React.lazy(() => import('./pages/LoginPage'));
-const ActivityLogs = React.lazy(() => import('./pages/ActivityLogs'));
-const Settings = React.lazy(() => import('./pages/Settings'));
-const EmailTemplatesPage = React.lazy(() => import('./pages/EmailTemplatesPage'));
-const UsersPage = React.lazy(() => import('./pages/UsersPage'));
-const ClientsPage = React.lazy(() => import('./pages/ClientsPage'));
-const ProfilePage = React.lazy(() => import('./pages/ProfilePage'));
+import Dashboard from './pages/Dashboard';
+import LoginPage from './pages/LoginPage';
+import CreateBooking from './pages/CreateBooking';
+import AllBookings from './pages/AllBookings';
+import AuthorizationPage from './pages/AuthorizationPage';
+import ActivityLogs from './pages/ActivityLogs';
+import Settings from './pages/Settings';
+import EmailTemplatesPage from './pages/EmailTemplatesPage';
+import UsersPage from './pages/UsersPage';
+import ClientsPage from './pages/ClientsPage';
+import ProfilePage from './pages/ProfilePage';
+import CalendarView from './pages/CalendarView';
+import ClientAdminPage from './pages/ClientAdminPage';
+import SentEmailsInbox from './pages/SentEmailsInbox';
 
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Toaster } from '@/components/ui/sonner';
@@ -54,11 +70,14 @@ import { toast } from 'sonner';
 export type UserRole = 'Admin' | 'Manager' | 'Agent' | 'HOD' | 'WFM';
 
 interface UserProfile {
+  id?: string;
   uid: string;
   email: string | null;
   role: UserRole;
   username?: string;
   clientId?: string;
+  photoURL?: string;
+  phone?: string;
 }
 
 export default function AppWrapper() {
@@ -335,6 +354,7 @@ function App() {
     
     if (user) {
       setProfile({
+        id: user.id || user.uid,
         uid: user.id || user.uid,
         email: user.email,
         role: user.role,
@@ -756,8 +776,10 @@ function App() {
                   <NavItem to="/" iconName="LayoutDashboard" label="Dashboard" />
                   {isAgent && <NavItem to="/bookings/new" iconName="PlusCircle" label="Create Booking" />}
                   <NavItem to="/bookings" iconName="FileEdit" label="All Bookings" />
+                  <NavItem to="/calendar" iconName="Calendar" label="Calendar View" />
                   <NavItem to="/drafts" iconName="FileEdit" label="Draft Bookings" />
                   <NavItem to="/authorized" iconName="CheckCircle2" label="Authorized" />
+                  <NavItem to="/sent-emails" iconName="Mail" label="Email Sent Inbox" />
                   
                   {isManager && (
                     <>
@@ -773,6 +795,9 @@ function App() {
                       <NavItem to="/settings" iconName="Settings" label="Settings" />
                     </>
                   )}
+                  {(isTenantAdmin || (profile?.role === 'Admin' && !isSystemAdmin)) && (
+                    <NavItem to="/client-portal" iconName="Database" label="Client Admin" />
+                  )}
                   {isSystemAdmin && (
                     <NavItem to="/clients" iconName="Building" label="Clients" />
                   )}
@@ -784,7 +809,7 @@ function App() {
                     onClick={handleInstallClick}
                     className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl transition duration-150 shadow-md active:scale-[0.98]"
                   >
-                    <Suspense fallback={null}><LazyIcon name="Download" className="w-3.5 h-3.5" /></Suspense>
+                    <Icon name="Download" className="w-3.5 h-3.5" />
                     <span>Install CRM Software</span>
                   </button>
                 )}
@@ -981,7 +1006,7 @@ function App() {
                       className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-[10px] uppercase tracking-widest rounded-full transition duration-150 shadow-md shadow-blue-500/10 active:scale-[0.98]"
                       title="Install CRM as Standalone Desktop Software"
                     >
-                      <Suspense fallback={null}><LazyIcon name="Download" className="w-3.5 h-3.5" /></Suspense>
+                      <Icon name="Download" className="w-3.5 h-3.5" />
                       <span>Install App</span>
                     </button>
                   )}
@@ -991,9 +1016,7 @@ function App() {
                     className="text-slate-400 cursor-pointer hover:text-slate-600 dark:hover:text-white transition-colors relative focus:outline-none p-2 rounded-full hover:bg-slate-50 dark:hover:bg-slate-800"
                     title="Keyboard Shortcuts Guide (Press K or ?)"
                   >
-                    <Suspense fallback={null}>
-                      <LazyIcon name="Keyboard" className="w-5 h-5" />
-                    </Suspense>
+                    <Icon name="Keyboard" className="w-5 h-5" />
                   </button>
                   <div className="text-slate-400 cursor-pointer hover:text-slate-600 dark:hover:text-white transition-colors" onClick={() => setDarkMode(!darkMode)}>
                     {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
@@ -1045,6 +1068,7 @@ function App() {
                     <Route path="/bookings/new" element={<CreateBooking profile={profile} />} />
                     <Route path="/bookings/edit/:id" element={<CreateBooking profile={profile} />} />
                     <Route path="/bookings" element={<AllBookings filter="all" profile={profile} />} />
+                    <Route path="/calendar" element={<CalendarView />} />
                     <Route path="/drafts" element={<AllBookings filter="draft" profile={profile} />} />
                     <Route path="/authorized" element={<AllBookings filter="authorized" profile={profile} />} />
                     <Route path="/users" element={isManager ? <UsersPage profile={profile} /> : <Navigate to="/" />} />
@@ -1053,6 +1077,8 @@ function App() {
                     <Route path="/logs" element={isAdmin ? <AdminRoute isAdmin={isAdmin}><ActivityLogs /></AdminRoute> : <Navigate to="/" />} />
                     <Route path="/templates" element={isAdmin ? <AdminRoute isAdmin={isAdmin}><EmailTemplatesPage /></AdminRoute> : <Navigate to="/" />} />
                     <Route path="/settings" element={<AdminRoute isAdmin={isSystemAdmin || profile?.role === 'Admin'}><Settings profile={profile} /></AdminRoute>} />
+                    <Route path="/client-portal" element={profile?.role === 'Admin' ? <ClientAdminPage /> : <Navigate to="/" />} />
+                    <Route path="/sent-emails" element={<SentEmailsInbox />} />
                     <Route path="/profile" element={<ProfilePage profile={profile} />} />
                     <Route path="*" element={<Navigate to="/" />} />
                   </Routes>
@@ -1072,9 +1098,7 @@ function App() {
                     {/* Header */}
                     <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <Suspense fallback={null}>
-                          <LazyIcon name="Keyboard" className="w-5 h-5 text-blue-500" />
-                        </Suspense>
+                        <Icon name="Keyboard" className="w-5 h-5 text-blue-500" />
                         <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
                           Keyboard Shortcuts
                         </h3>
@@ -1227,9 +1251,7 @@ function NavItem({ to, iconName, label }: { to: string, iconName: string, label:
         "transition-colors",
         isActive ? "text-blue-500" : "text-slate-600 group-hover:text-slate-400"
       )}>
-        <Suspense fallback={<div className="w-4 h-4 bg-slate-800/50 rounded animate-pulse" />}>
-          <LazyIcon name={iconName} className="w-4 h-4" />
-        </Suspense>
+        <Icon name={iconName} className="w-4 h-4" />
       </div>
       {label}
     </Link>

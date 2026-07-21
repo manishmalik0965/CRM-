@@ -63,8 +63,8 @@ self.addEventListener('fetch', (event) => {
     const isApiRoute = requestUrl.pathname.startsWith('/api/');
     // Is it a document navigation?
     const isNavigation = event.request.mode === 'navigate';
-    // Is it booking list or analytics dashboard related (/api/bookings)?
-    const isBookingOrAnalyticsApi = requestUrl.pathname.startsWith('/api/bookings');
+    // Is it booking list or analytics dashboard related (/api/bookings, /api/settings/stats)?
+    const isBookingOrAnalyticsApi = requestUrl.pathname.startsWith('/api/bookings') || requestUrl.pathname.startsWith('/api/settings/stats');
 
     if (isBookingOrAnalyticsApi) {
         // Strategy: Stale-While-Revalidate specifically for booking list & analytics dashboard

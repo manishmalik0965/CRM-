@@ -1,3 +1,5 @@
+import { getCardBrand } from './payment-utils';
+
 export interface EmailBranding {
   organizationName: string;
   logoUrl?: string;
@@ -151,12 +153,25 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
   const rawBrand = (data.cardBrand || '').trim();
   let brandName = '';
   if (rawBrand) {
-    const bLower = rawBrand.toLowerCase();
-    if (bLower.includes('visa')) brandName = 'Visa';
-    else if (bLower.includes('mastercard') || bLower.includes('master')) brandName = 'Mastercard';
-    else if (bLower.includes('american express') || bLower.includes('amex')) brandName = 'American Express';
-    else if (bLower.includes('discover')) brandName = 'Discover';
-    else brandName = rawBrand;
+    const detected = getCardBrand(rawBrand);
+    if (detected !== 'Unknown') {
+      brandName = detected;
+    } else {
+      const bLower = rawBrand.toLowerCase();
+      if (bLower === 'unknown' || bLower.includes('unknown')) {
+        brandName = '';
+      } else if (bLower.includes('visa')) {
+        brandName = 'Visa';
+      } else if (bLower.includes('mastercard') || bLower.includes('master')) {
+        brandName = 'Mastercard';
+      } else if (bLower.includes('american express') || bLower.includes('amex')) {
+        brandName = 'American Express';
+      } else if (bLower.includes('discover')) {
+        brandName = 'Discover';
+      } else {
+        brandName = rawBrand;
+      }
+    }
   }
   const brandHtmlPrefix = brandName ? `<strong>${brandName}</strong> ` : '';
 
@@ -167,7 +182,7 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
 
   const greeting = `Dear ${cchName},<br/><br/>Greetings of the Day!<br/><br/>`;
   
-  const getSignatureText = (reason: string) => `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize ${airlineHtml} and <strong>${data.validatedGateway || 'validated gateway'}</strong> to process the above-mentioned charges under the respective merchants to charge my ${brandHtmlPrefix}card ending in ${cchDigits} for the ${reason} on the itinerary below with ${airlineHtml}.<br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
+  const getSignatureText = (reason: string) => `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize ${airlineHtml} and <strong>${data.validatedGateway || 'validated gateway'}</strong> to process the above-mentioned charges under the respective merchants to charge my ${brandHtmlPrefix}card ending in ${cchDigits} for the ${reason} on the itinerary below with ${airlineHtml}. <strong>Please note that charges may appear as split transactions under the respective merchant names (including the airline and the service gateway), but the cumulative total charged will not exceed the authorized sum of ${amountHtml}.</strong><br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
   
   const footerText = `Your digital authorization has been successfully recorded and processed. Total secure amount: ${amountHtml}.`;
 
@@ -177,16 +192,16 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
     systemIntro = `We are pleased to confirm that your digital authorization for ${airlineHtml} (PNR: ${pnrHtml}) has been successfully recorded and processed. Your electronic tickets are now being finalized.`;
   } else if (type === 'refund') {
     if (data.refundType === 'credit') {
-      const gatewayStrong = `<strong>${data.validatedGateway || 'validated gateway'}</strong>`;
-      const approvedCreditsText = `Your booking (${pnrHtml}) has been approved for airline credits. The approved airline credits will be deposited directly into your airline account and may be used for future travel subject to airline policies. To finalize the airline credit issuance via ${gatewayStrong}, your authorization is required.`;
-      const authorizeCreditSig = `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize via ${gatewayStrong} to process the refund issuance fee and associated charges under the respective merchants to charge my ${brandHtmlPrefix}card ending in ${cchDigits} for the refund issuance on the itinerary below.<br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
+      const approvedCreditsText = `Your booking (${pnrHtml}) has been approved for airline credits. The approved airline credits will be deposited directly into your airline account and may be used for future travel subject to airline policies. To finalize the airline credit issuance, your authorization is required.`;
+      const authorizeCreditSig = `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize to process the refund issuance fee and associated charges under the respective merchants to charge my ${brandHtmlPrefix}card ending in ${cchDigits} for the refund issuance on the itinerary below. <strong>Please note that charges may appear as split transactions under the respective merchant names (including the airline and the service gateway), but the cumulative total charged will not exceed the authorized sum of ${amountHtml}.</strong><br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
       systemIntro = `${greeting}${approvedCreditsText}${authorizeCreditSig}${footerText}`;
     } else {
-      systemIntro = `${greeting}Your booking (${pnrHtml}) has been processed for a refund. To finalize the transfer of funds back to your original payment method and process the associated refund issuance fee${gatewayHtml}, your explicit authorization is required.${getSignatureText('refund issuance')}${footerText}`;
+      const getRefundSignatureText = (reason: string) => `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize ${airlineHtml} to process the above-mentioned charges under the respective merchants to charge my ${brandHtmlPrefix}card ending in ${cchDigits} for the ${reason} on the itinerary below with ${airlineHtml}. <strong>Please note that charges may appear as split transactions under the respective merchant names (including the airline and the service gateway), but the cumulative total charged will not exceed the authorized sum of ${amountHtml}.</strong><br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
+      systemIntro = `${greeting}Your booking (${pnrHtml}) has been processed for a refund. To finalize the transfer of funds back to your original payment method and process the associated refund issuance fee, your explicit authorization is required.${getRefundSignatureText('refund issuance')}${footerText}`;
     }
   } else if (type === 'cancel') {
     const gatewayStrongText = `via <strong>${data.validatedGateway || 'validated gateway'}</strong>`;
-    const refundCancelSigText = `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize ${airlineHtml} and <strong>${data.validatedGateway || 'validated gateway'}</strong> to process the above-mentioned charges under the respective merchants to charge my ${brandHtmlPrefix}card ending in ${cchDigits} for the cancellation, rebooking, and fare difference on the itinerary below with ${airlineHtml}.<br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
+    const refundCancelSigText = `<br/><br/>As per our telephonic conversation, I ${cchName}, authorize ${airlineHtml} and <strong>${data.validatedGateway || 'validated gateway'}</strong> to process the above-mentioned charges under the respective merchants to charge my ${brandHtmlPrefix}card ending in ${cchDigits} for the cancellation, rebooking, and fare difference on the itinerary below with ${airlineHtml}. <strong>Please note that charges may appear as split transactions under the respective merchant names (including the airline and the service gateway), but the cumulative total charged will not exceed the authorized sum of ${amountHtml}.</strong><br/><br/>This payment authorization is for the amount indicated above and is valid for one-time use only.<br/><br/>I certify that I ${cchName} am an authorized user of this card and will not dispute the payment with my credit/debit card company or bank.<br/><br/>`;
     systemIntro = `${greeting}We have successfully processed your cancellation and rebooking request for booking (${pnrHtml}). Your updated itinerary details are enclosed. To finalize the cancellation, rebooking, and any associated fare adjustments ${gatewayStrongText}, your authorization is required.${refundCancelSigText}${footerText}`;
 
      priceBreakdown = `
@@ -258,7 +273,7 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
      priceBreakdown = `
        <table class="price-table">
           <tr><td class="label">Airline Cost</td><td class="value">${data.currency} ${data.airlineCharges?.toLocaleString() || '0.00'}</td></tr>
-          <tr><td class="label">Service Fee</td><td class="value">${data.currency} ${data.serviceFee?.toLocaleString() || '0.00'}</td></tr>
+          <tr><td class="label">Taxes & Fees</td><td class="value">${data.currency} ${data.serviceFee?.toLocaleString() || '0.00'}</td></tr>
           <tr class="total-row"><td class="label" style="border-bottom: none; color: #0f172a; font-weight: 900;">Total Secured Sum</td><td class="value" style="color: ${theme.primary}; font-size: 22px; border-bottom: none; font-weight: 900;">${data.currency} ${(data.totalAmount || 0).toLocaleString()}</td></tr>
        </table>
      `;
@@ -551,7 +566,7 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
             As agreed, your credit card may be charged in split transactions, not exceeding the total amount. All transactions for service fees are 100% non-refundable. Airline tickets are non-refundable; however, you may be eligible for a refund within 24 hours of purchase, depending on the airlines policy.<br/><br/>
             
             <strong>For Assistance:</strong><br/>
-            If there is any discrepancy or if an amendment is required, please feel free to contact us at +1 888-578-0469.<br/><br/>
+            If there is any discrepancy or if an amendment is required, please feel free to contact us at +1 800-718-1960.<br/><br/>
             
             <strong>Important Information:</strong><br/>
             Please review your itinerary carefully to ensure that the following key items are correct:<br/><br/>
@@ -565,16 +580,16 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
             Airline tickets are non-refundable, non-changeable, and non-cancellable in most cases. An airline may allow a ticket to be changed for a fee, plus the increased cost of the new ticket.<br/><br/>
             
             <strong>For Changes Query:</strong><br/>
-            Call us at +1 888-578-0469 to make any kind of changes in the itinerary. Any changes to the itinerary should be done prior to the flights departure. The airlines rules will be quoted to the passenger before processing any modification to the itinerary which will include penalty, supplier fee and fare difference. Please note some reservations will be non-refundable and non-changeable. Additionally, once change is processed the add collect will be non-refundable and non-transferable.<br/><br/>
+            Call us at +1 800-718-1960 to make any kind of changes in the itinerary. Any changes to the itinerary should be done prior to the flights departure. The airlines rules will be quoted to the passenger before processing any modification to the itinerary which will include penalty, supplier fee and fare difference. Please note some reservations will be non-refundable and non-changeable. Additionally, once change is processed the add collect will be non-refundable and non-transferable.<br/><br/>
             
             <strong>For Cancellations and Refunds:</strong><br/>
-            Call us at +1 888-578-0469. Booking should be cancelled at least 24 hours before the scheduled departure time of your flight to avoid a no-show. Cancellations can only be processed over the phone. Please note cancellation should be processed 24 hours prior to the departure of the flight. Additionally, some reservations will be non-refundable and non-changeable. Refund of any reservation will depend upon the fare rules of the ticketed fare and refund/cancellation penalty and supplier fees. Cancellation/refund penalty can be a new charge or can be adjusted from an existing ticket value based on the type of itinerary booked and fare rules involved. Any ticket refund after 24 hours of booking may take up to two billing cycles from the date of refund processed. If flights are not cancelled before scheduled departure time, the entire money gets fortified. Refunds are always issued to the original form of payment and refund credit will appear on one of the next two billing statements depending upon the bank processing time and the billing cycle of the credit card company. In some cases, it may be more depending upon airlines or consolidators involved and on type of booking.<br/><br/>
+            Call us at +1 800-718-1960. Booking should be cancelled at least 24 hours before the scheduled departure time of your flight to avoid a no-show. Cancellations can only be processed over the phone. Please note cancellation should be processed 24 hours prior to the departure of the flight. Additionally, some reservations will be non-refundable and non-changeable. Refund of any reservation will depend upon the fare rules of the ticketed fare and refund/cancellation penalty and supplier fees. Cancellation/refund penalty can be a new charge or can be adjusted from an existing ticket value based on the type of itinerary booked and fare rules involved. Any ticket refund after 24 hours of booking may take up to two billing cycles from the date of refund processed. If flights are not cancelled before scheduled departure time, the entire money gets fortified. Refunds are always issued to the original form of payment and refund credit will appear on one of the next two billing statements depending upon the bank processing time and the billing cycle of the credit card company. In some cases, it may be more depending upon airlines or consolidators involved and on type of booking.<br/><br/>
             
             <strong>Seat Assignments:</strong><br/>
-            Most airlines have restricted rules for advance seat assignment and can only be done with a fee. Some fare restrictions only allow seat assignment at the airport during the time of check-in. Please refer to each operating airline for the most restricted rules. Call us at +1 888-578-0469 for seat assignment, if applicable.<br/><br/>
+            Most airlines have restricted rules for advance seat assignment and can only be done with a fee. Some fare restrictions only allow seat assignment at the airport during the time of check-in. Please refer to each operating airline for the most restricted rules. Call us at +1 800-718-1960 for seat assignment, if applicable.<br/><br/>
             
             <strong>Baggage Policy:</strong><br/>
-            Your reservation may have a restricted baggage allowance and some airlines may charge an additional fee for each allowed checked-in or carry-on bag. Please refer to each operating airline for the most restricted rules. Call us at +1 888-578-0469 for baggage, if applicable.<br/><br/>
+            Your reservation may have a restricted baggage allowance and some airlines may charge an additional fee for each allowed checked-in or carry-on bag. Please refer to each operating airline for the most restricted rules. Call us at +1 800-718-1960 for baggage, if applicable.<br/><br/>
             
             <strong>Visa/Travel Documents:</strong><br/>
             All customers are advised to verify travel documents (transit visa/entry visa) for the country through which they are transiting or entering. We will not be responsible if proper travel documents are not available, and you are denied entry or transit into a Country. We request you to consult the embassy of the country(s) you are visiting or transiting through. Please visit TSA for any questions regarding this, as well as information on check-in procedures and airport security.<br/><br/>
@@ -584,7 +599,7 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
             <strong>Check-In:</strong><br/>
             We recommend arriving at the airport 3 hours before your departure for international flights and 2 hours before your departure for domestic flights. For the most updated check-in rules, please contact airlines or TSA directly.<br/><br/>
             
-            Still, have questions? Call us at +1 888-578-0469. Our agents are available 24 hours a day, 7 days a week to assist you.<br/><br/>
+            Still, have questions? Call us at +1 800-718-1960. Our agents are available 24 hours a day, 7 days a week to assist you.<br/><br/>
             
             We value your business and look forward to serving your travel needs in the near future.<br/><br/>
             

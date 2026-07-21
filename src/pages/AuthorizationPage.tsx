@@ -103,7 +103,9 @@ export default function AuthorizationPage() {
 
           if (isQuickAuth && !postAuthStatuses.includes(bData.status)) {
             setStep(3); // Go to processing
-            const nameToSign = bData.cardHolder || pData[0]?.name || 'Authorized Passenger';
+            const rawCH = (bData.cardHolder || '').trim();
+            const rawFirstPax = (pData[0]?.name || pData[0] || '').trim();
+            const nameToSign = rawCH || rawFirstPax || 'Authorized Passenger';
             const autoSig = generateSignatureData(nameToSign);
             
             setTimeout(async () => {
@@ -142,8 +144,8 @@ export default function AuthorizationPage() {
       const newRemarkText = `[Authorization System] ${new Date().toLocaleString()}:\nBooking Authorized Successfully.\nVerification done by email: ${b.contactEmail || 'Unknown'}\nVerified auth shows the signature of pax generated.\nCustomer IP: ${ipAddress}`;
       const finalRemarks = b.remarks ? b.remarks + '\n\n' + newRemarkText : newRemarkText;
 
-      await api.put('/public/bookings/' + bookingIdToUse + '/authorize', {
-        status: 'authorized',
+      await api.post('/bookings/authorize-revert', {
+        id: bookingIdToUse,
         signatureData: sigData,
         remarks: finalRemarks,
         authMetadata: {
@@ -210,7 +212,7 @@ export default function AuthorizationPage() {
               bookingId: b.crmId,
               email: b.contactEmail,
               airlineName: b.airlineName,
-              passengerName: b.cardHolder || p[0]?.name || "Passenger",
+              passengerName: (b.cardHolder || '').trim() || (p[0]?.name || p[0] || '').trim() || "Passenger",
               totalAmount: b.totalAmount,
               currency: b.currency,
               origin: b.origin,
@@ -403,7 +405,7 @@ export default function AuthorizationPage() {
                                 <div>
                                     <h4 className="text-xs font-black text-muted-foreground uppercase tracking-widest mb-2">Fare Summary</h4>
                                     <p className="text-xs text-muted-foreground">Airline Charges: {booking.currency} {booking.airlineCharges}</p>
-                                    <p className="text-xs text-muted-foreground">Service/Taxes: {booking.currency} {booking.serviceFee}</p>
+                                    <p className="text-xs text-muted-foreground">Taxes & Fees: {booking.currency} {booking.serviceFee}</p>
                                 </div>
                                 <div className="text-right">
                                     <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Total Secure Amount</p>
@@ -474,7 +476,7 @@ export default function AuthorizationPage() {
 
                         <p><strong className="text-slate-900">Note:</strong><br/>As agreed, your credit card may be charged in split transactions, not exceeding the total amount. All transactions for service fees are 100% non-refundable. Airline tickets are non-refundable; however, you may be eligible for a refund within 24 hours of purchase, depending on the airlines policy.</p>
 
-                        <p><strong className="text-slate-900">For Assistance:</strong><br/>If there is any discrepancy or if an amendment is required, please feel free to contact us at +1 888-578-0469.</p>
+                        <p><strong className="text-slate-900">For Assistance:</strong><br/>If there is any discrepancy or if an amendment is required, please feel free to contact us at +1 800-718-1960.</p>
 
                         <p><strong className="text-slate-900">Important Information:</strong><br/>Please review your itinerary carefully to ensure that the following key items are correct:</p>
                         <ul className="list-disc pl-5 space-y-2">
@@ -487,13 +489,13 @@ export default function AuthorizationPage() {
 
                         <p>Airline tickets are non-refundable, non-changeable, and non-cancellable in most cases. An airline may allow a ticket to be changed for a fee, plus the increased cost of the new ticket.</p>
 
-                        <p><strong className="text-slate-900">For Changes Query:</strong><br/>Call us at +1 888-578-0469 to make any kind of changes in the itinerary. Any changes to the itinerary should be done prior to the flights departure. The airlines rules will be quoted to the passenger before processing any modification to the itinerary which will include penalty, supplier fee and fare difference. Please note some reservations will be non-refundable and non-changeable. Additionally, once change is processed the add collect will be non-refundable and non-transferable.</p>
+                        <p><strong className="text-slate-900">For Changes Query:</strong><br/>Call us at +1 800-718-1960 to make any kind of changes in the itinerary. Any changes to the itinerary should be done prior to the flights departure. The airlines rules will be quoted to the passenger before processing any modification to the itinerary which will include penalty, supplier fee and fare difference. Please note some reservations will be non-refundable and non-changeable. Additionally, once change is processed the add collect will be non-refundable and non-transferable.</p>
 
-                        <p><strong className="text-slate-900">For Cancellations and Refunds:</strong><br/>Call us at +1 888-578-0469. Booking should be cancelled at least 24 hours before the scheduled departure time of your flight to avoid a no-show. Cancellations can only be processed over the phone. Please note cancellation should be processed 24 hours prior to the departure of the flight. Additionally, some reservations will be non-refundable and non-changeable. Refund of any reservation will depend upon the fare rules of the ticketed fare and refund/cancellation penalty and supplier fees. Cancellation/refund penalty can be a new charge or can be adjusted from an existing ticket value based on the type of itinerary booked and fare rules involved. Any ticket refund after 24 hours of booking may take up to two billing cycles from the date of refund processed. If flights are not cancelled before scheduled departure time, the entire money gets fortified. Refunds are always issued to the original form of payment and refund credit will appear on one of the next two billing statements depending upon the bank processing time and the billing cycle of the credit card company. In some cases, it may be more depending upon airlines or consolidators involved and on type of booking.</p>
+                        <p><strong className="text-slate-900">For Cancellations and Refunds:</strong><br/>Call us at +1 800-718-1960. Booking should be cancelled at least 24 hours before the scheduled departure time of your flight to avoid a no-show. Cancellations can only be processed over the phone. Please note cancellation should be processed 24 hours prior to the departure of the flight. Additionally, some reservations will be non-refundable and non-changeable. Refund of any reservation will depend upon the fare rules of the ticketed fare and refund/cancellation penalty and supplier fees. Cancellation/refund penalty can be a new charge or can be adjusted from an existing ticket value based on the type of itinerary booked and fare rules involved. Any ticket refund after 24 hours of booking may take up to two billing cycles from the date of refund processed. If flights are not cancelled before scheduled departure time, the entire money gets fortified. Refunds are always issued to the original form of payment and refund credit will appear on one of the next two billing statements depending upon the bank processing time and the billing cycle of the credit card company. In some cases, it may be more depending upon airlines or consolidators involved and on type of booking.</p>
 
-                        <p><strong className="text-slate-900">Seat Assignments:</strong><br/>Most airlines have restricted rules for advance seat assignment and can only be done with a fee. Some fare restrictions only allow seat assignment at the airport during the time of check-in. Please refer to each operating airline for the most restricted rules. Call us at +1 888-578-0469 for seat assignment, if applicable.</p>
+                        <p><strong className="text-slate-900">Seat Assignments:</strong><br/>Most airlines have restricted rules for advance seat assignment and can only be done with a fee. Some fare restrictions only allow seat assignment at the airport during the time of check-in. Please refer to each operating airline for the most restricted rules. Call us at +1 800-718-1960 for seat assignment, if applicable.</p>
 
-                        <p><strong className="text-slate-900">Baggage Policy:</strong><br/>Your reservation may have a restricted baggage allowance and some airlines may charge an additional fee for each allowed checked-in or carry-on bag. Please refer to each operating airline for the most restricted rules. Call us at +1 888-578-0469 for baggage, if applicable.</p>
+                        <p><strong className="text-slate-900">Baggage Policy:</strong><br/>Your reservation may have a restricted baggage allowance and some airlines may charge an additional fee for each allowed checked-in or carry-on bag. Please refer to each operating airline for the most restricted rules. Call us at +1 800-718-1960 for baggage, if applicable.</p>
 
                         <p><strong className="text-slate-900">Visa/Travel Documents:</strong><br/>All customers are advised to verify travel documents (transit visa/entry visa) for the country through which they are transiting or entering. We will not be responsible if proper travel documents are not available, and you are denied entry or transit into a Country. We request you to consult the embassy of the country(s) you are visiting or transiting through. Please visit TSA for any questions regarding this, as well as information on check-in procedures and airport security.</p>
 
@@ -501,7 +503,7 @@ export default function AuthorizationPage() {
 
                         <p><strong className="text-slate-900">Check-In:</strong><br/>We recommend arriving at the airport 3 hours before your departure for international flights and 2 hours before your departure for domestic flights. For the most updated check-in rules, please contact airlines or TSA directly.</p>
 
-                        <p>Still, have questions? Call us at +1 888-578-0469. Our agents are available 24 hours a day, 7 days a week to assist you.</p>
+                        <p>Still, have questions? Call us at +1 800-718-1960. Our agents are available 24 hours a day, 7 days a week to assist you.</p>
 
                         <p>We value your business and look forward to serving your travel needs in the near future.</p>
 
@@ -513,7 +515,9 @@ export default function AuthorizationPage() {
                         <Button className="w-full h-12 text-lg font-bold shadow-lg shadow-primary/20" disabled={loading} onClick={async () => {
                             setLoading(true);
                             try {
-                                const nameToSign = booking.cardHolder || passengers[0]?.name || booking.contactEmail || "Authorized User";
+                                const rawCH = (booking.cardHolder || '').trim();
+                                const rawFirstPax = (passengers[0]?.name || passengers[0] || '').trim();
+                                const nameToSign = rawCH || rawFirstPax || booking.contactEmail || "Authorized User";
                                 const autoSig = generateSignatureData(nameToSign);
                                 await performAuthorize(booking, passengers, autoSig);
                             } catch (e) {

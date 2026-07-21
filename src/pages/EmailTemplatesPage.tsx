@@ -167,7 +167,7 @@ export default function EmailTemplatesPage() {
            destination: previewBooking.destination || 'LHR',
            cardHolderName: previewBooking.cardHolder || 'Jane Doe',
            cardLast4: previewBooking.card_last4 || '1111',
-           validatedGateway: previewBooking.gateway,
+           validatedGateway: previewBooking.validatedGateway || previewBooking.gateway,
            branding: {
               emailTemplates: templates // Pass current unsaved templates for preview
            }

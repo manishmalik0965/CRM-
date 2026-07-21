@@ -3,51 +3,101 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import nodemailer from "nodemailer";
+import { v4 as uuidv4 } from 'uuid';
+import { processBase64Images } from "./server/utils/imageProcessor.ts";
 import { generateAuthEmail, generateConfirmationEmail } from "./src/lib/emailTemplates.ts";
 import authRoutes from './server/routes/auth.routes';
 import apiRoutes from './server/routes/api.routes';
 import db from './server/database/connection';
 
-function processAttachmentsAndRichText(attachmentsList: any[] | undefined, packageRichText: string | undefined, snapshotBase64: string | undefined, bookingId: string) {
-  let finalAttachments = attachmentsList ? [...attachmentsList] : [];
-  let processedRichText = packageRichText;
-  let snapshotUrl = undefined;
+export function createSmtpTransporter(profile: any) {
+  let activeProfile = { ...profile };
 
-  if (processedRichText) {
-    const srcRegex = /src=["']data:(image\/[^;]+);base64,([^"']+)["']/g;
-    let counter = 0;
-    processedRichText = processedRichText.replace(srcRegex, (match, contentType, base64Data) => {
-      try {
-        counter++;
-        const cid = `pkg-img-${Date.now()}-${counter}`;
-        const ext = contentType.split('/')[1] === 'jpeg' ? 'jpg' : contentType.split('/')[1] || 'png';
-        finalAttachments.push({
-          filename: `inline-image-${counter}.${ext}`,
-          content: base64Data,
-          encoding: 'base64',
-          cid: cid,
-          contentDisposition: 'inline'
-        });
-        return `src="cid:${cid}"`;
-      } catch (e) {
-        console.error("Failed to process inline base64 image:", e);
-        return match;
+  // Fallback to environment variables if database configuration is missing or empty
+  if (!activeProfile || !activeProfile.email || !activeProfile.appPassword) {
+    if (process.env.SMTP_EMAIL && process.env.SMTP_APP_PASSWORD) {
+      console.log(`[SMTP] Profile missing or incomplete. Falling back to environment configurations: ${process.env.SMTP_EMAIL}`);
+      activeProfile = {
+        email: process.env.SMTP_EMAIL,
+        appPassword: process.env.SMTP_APP_PASSWORD,
+        host: 'smtp.gmail.com',
+        port: 465,
+        label: 'SkyWay Travel Group Alerts'
+      };
+    } else {
+      throw new Error("Invalid SMTP profile or missing credentials. Please configure SMTP in Settings or define SMTP_EMAIL & SMTP_APP_PASSWORD environment variables.");
+    }
+  }
+
+  const cleanPassword = activeProfile.appPassword.replace(/\s+/g, '');
+  const email = activeProfile.email.trim();
+  const host = (activeProfile.host || '').trim().toLowerCase();
+
+  // If Gmail or Google host, use Nodemailer's highly optimized built-in Gmail service wrapper
+  if (host.includes('gmail.com') || email.endsWith('@gmail.com')) {
+    return nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: email,
+        pass: cleanPassword
       }
     });
   }
 
+  // Generic SMTP transporter
+  const port = activeProfile.port ? parseInt(activeProfile.port) : 465;
+  return nodemailer.createTransport({
+    host: activeProfile.host || 'smtp.gmail.com',
+    port: port,
+    secure: port === 587 ? false : true,
+    auth: {
+      user: email,
+      pass: cleanPassword
+    },
+    tls: {
+      rejectUnauthorized: false
+    }
+  });
+}
+
+async function processAttachmentsAndRichText(attachmentsList: any[] | undefined, packageRichText: string | undefined, snapshotBase64: string | undefined, bookingId: string, req: express.Request) {
+  let finalAttachments = attachmentsList ? [...attachmentsList] : [];
+  let processedRichText = packageRichText;
+  let snapshotUrl = undefined;
+
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+  const baseUrl = `${proto}://${req.get('host')}`;
+
+  if (processedRichText) {
+    // Replaced Base64-to-CID with URL-based images for better Gmail compatibility
+    processedRichText = await processBase64Images(processedRichText, baseUrl);
+  }
+
   if (snapshotBase64) {
     try {
-      snapshotUrl = `cid:bookingsnapshot`;
-      finalAttachments.push({
-        filename: `Booking_Snapshot_${bookingId}.jpg`,
-        content: snapshotBase64,
-        encoding: 'base64',
-        cid: 'bookingsnapshot',
-        contentDisposition: 'inline'
-      });
+      // Also process snapshot if it's base64
+      if (snapshotBase64.startsWith('data:image/')) {
+        const tempHtml = `<img src="${snapshotBase64}">`;
+        const processedHtml = await processBase64Images(tempHtml, baseUrl);
+        const match = processedHtml.match(/src="([^"]+)"/);
+        if (match) {
+          snapshotUrl = match[1];
+        }
+      }
+
+      // If failed or not processed, fallback to CID for now or skip if user wants NO CIDs
+      if (!snapshotUrl) {
+        snapshotUrl = `cid:bookingsnapshot`;
+        finalAttachments.push({
+          filename: `Booking_Snapshot_${bookingId}.jpg`,
+          content: snapshotBase64.split(',')[1] || snapshotBase64,
+          encoding: 'base64',
+          cid: 'bookingsnapshot',
+          contentDisposition: 'inline'
+        });
+      }
     } catch (e) {
-       console.error("Failed to process snapshotBase64", e);
+      console.error("Failed to process snapshot image:", e);
     }
   }
 
@@ -176,6 +226,336 @@ function generateIcsCalendarInvite(details: any): string {
   ].join('\r\n');
 }
 
+let lastSeenAppUrl = '';
+
+async function autoCompletePassedBookings() {
+  console.log('[Auto-Complete Scheduler] Running periodic past flight checks...');
+  try {
+    const [rows]: any = await db.query(`
+      SELECT b.*, u.id AS creator_user_id
+      FROM bookings b
+      LEFT JOIN users u ON b.created_by = u.id
+      WHERE b.status != 'Completed' AND b.status != 'completed'
+    `);
+
+    if (!rows || rows.length === 0) {
+      console.log('[Auto-Complete Scheduler] No active bookings found to auto-complete.');
+      return;
+    }
+
+    for (const row of rows) {
+      let details: any = {};
+      if (row.details) {
+        try {
+          details = typeof row.details === 'string' ? JSON.parse(row.details) : row.details;
+        } catch (e) {
+          console.error(`[Auto-Complete Scheduler] Failed to parse details JSON for booking ${row.id}:`, e);
+          continue;
+        }
+      }
+
+      // Check departure/flight date
+      const depDateStr = details.departureDate || details.departure_date;
+      if (!depDateStr) {
+        continue;
+      }
+
+      const depDate = new Date(depDateStr);
+      if (isNaN(depDate.getTime())) {
+        continue;
+      }
+
+      const timeSinceFlightMs = Date.now() - depDate.getTime();
+      const timeSinceFlightHours = timeSinceFlightMs / (1000 * 60 * 60);
+
+      // If flight date has passed by 24 hours
+      if (timeSinceFlightHours >= 24) {
+        console.log(`[Auto-Complete Scheduler] Booking ${row.id} (CRM ID: ${row.crm_id}) flight was on ${depDate.toLocaleString()} (${timeSinceFlightHours.toFixed(1)} hours ago). Auto-completing.`);
+        
+        // Update database
+        await db.query("UPDATE bookings SET status = 'Completed' WHERE id = ?", [row.id]);
+        
+        // Log in activity_logs
+        try {
+          const logId = uuidv4();
+          let userId = row.creator_user_id;
+          if (!userId) {
+            const [companyUser]: any = await db.query('SELECT id FROM users WHERE company_id = ? LIMIT 1', [row.company_id || 'legacy-tenant-1']);
+            if (companyUser.length > 0) {
+              userId = companyUser[0].id;
+            } else {
+              const [anyUser]: any = await db.query('SELECT id FROM users LIMIT 1');
+              if (anyUser.length > 0) {
+                userId = anyUser[0].id;
+              }
+            }
+          }
+          
+          if (userId) {
+            const logDetailsJson = JSON.stringify({ 
+              bookingId: row.id,
+              crmId: row.crm_id,
+              reason: 'Automatic auto-complete after 24h past flight departure date',
+              preciseTimestamp: new Date().toISOString()
+            });
+            
+            await db.query(
+              'INSERT INTO activity_logs (id, company_id, user_id, action, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+              [logId, row.company_id || 'legacy-tenant-1', userId, 'Auto-Completed Booking', logDetailsJson, 'System Scheduler']
+            );
+          }
+        } catch (logErr: any) {
+          console.error('[Auto-Complete Scheduler] Failed to insert activity log:', logErr.message);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error('[Auto-Complete Scheduler] Error updating passed bookings:', err.message);
+  }
+}
+
+async function checkAndAlertUpcomingBookings() {
+  console.log('[Upcoming Flight Alert Scheduler] Running periodic upcoming flight date checks...');
+  try {
+    const [rows]: any = await db.query(`
+      SELECT b.*, u.email AS agent_email, u.display_name AS agent_name, c.name AS company_name, c.domain AS company_domain
+      FROM bookings b
+      LEFT JOIN users u ON b.created_by = u.id
+      LEFT JOIN companies c ON b.company_id = c.id
+      ORDER BY b.created_at DESC
+    `);
+
+    if (!rows || rows.length === 0) {
+      console.log('[Upcoming Flight Alert Scheduler] No bookings found.');
+      return;
+    }
+
+    for (const row of rows) {
+      let details: any = {};
+      if (row.details) {
+        try {
+          details = typeof row.details === 'string' ? JSON.parse(row.details) : row.details;
+        } catch (e) {
+          console.error(`[Upcoming Flight Alert Scheduler] Failed to parse details JSON for booking ${row.id}:`, e);
+          continue;
+        }
+      }
+
+      // If already notified, skip
+      if (details.agentNotified72h) {
+        continue;
+      }
+
+      // Check departure/flight date
+      const depDateStr = details.departureDate || details.departure_date;
+      if (!depDateStr) {
+        continue;
+      }
+
+      const depDate = new Date(depDateStr);
+      if (isNaN(depDate.getTime())) {
+        continue;
+      }
+
+      const timeUntilFlightMs = depDate.getTime() - Date.now();
+      const timeUntilFlightHours = timeUntilFlightMs / (1000 * 60 * 60);
+
+      // Check if flight is within 72 hours and in the future
+      if (timeUntilFlightHours > 0 && timeUntilFlightHours <= 72) {
+        console.log(`[Upcoming Flight Alert Scheduler] Found booking ${row.id} departing in ${timeUntilFlightHours.toFixed(1)} hours.`);
+
+        // Find SMTP profile to send alert
+        let smtpProfile: any = null;
+        const [settingsRows]: any = await db.query('SELECT settings_json FROM settings WHERE company_id = ?', [row.company_id]);
+        if (settingsRows.length > 0) {
+          try {
+            const settingsObj = typeof settingsRows[0].settings_json === 'string' ? JSON.parse(settingsRows[0].settings_json) : settingsRows[0].settings_json;
+            if (Array.isArray(settingsObj.smtpProfiles) && settingsObj.smtpProfiles.length > 0) {
+              smtpProfile = settingsObj.smtpProfiles.find((p: any) => p.email && p.appPassword) || settingsObj.smtpProfiles[0];
+            }
+          } catch (e) {}
+        }
+
+        // Fallback to legacy-tenant-1
+        if (!smtpProfile || !smtpProfile.appPassword) {
+          const [fallbackRows]: any = await db.query("SELECT settings_json FROM settings WHERE company_id = 'legacy-tenant-1'");
+          if (fallbackRows.length > 0) {
+            try {
+              const settingsObj = typeof fallbackRows[0].settings_json === 'string' ? JSON.parse(fallbackRows[0].settings_json) : fallbackRows[0].settings_json;
+              if (Array.isArray(settingsObj.smtpProfiles) && settingsObj.smtpProfiles.length > 0) {
+                smtpProfile = settingsObj.smtpProfiles.find((p: any) => p.email && p.appPassword) || settingsObj.smtpProfiles[0];
+              }
+            } catch (e) {}
+          }
+        }
+
+        if (!smtpProfile || !smtpProfile.appPassword) {
+          console.warn(`[Upcoming Flight Alert Scheduler] Cannot send alert for booking ${row.id}: No SMTP configuration found.`);
+          continue;
+        }
+
+        // Gather recipient emails (notify the agent who created, or default)
+        const recipients = new Set<string>();
+        if (row.agent_email) recipients.add(row.agent_email);
+        if (details.agentEmail) recipients.add(details.agentEmail);
+        if (recipients.size === 0) {
+          recipients.add('manishmalik0965@gmail.com');
+        }
+
+        // Parse passenger names
+        let passengerNamesList: string[] = [];
+        if (row.passenger_names) {
+          try {
+            const parsed = typeof row.passenger_names === 'string' ? JSON.parse(row.passenger_names) : row.passenger_names;
+            passengerNamesList = Array.isArray(parsed) ? parsed.map((p: any) => typeof p === 'string' ? p : p.name || '') : [];
+          } catch (e) {}
+        }
+        if (passengerNamesList.length === 0 && details.passengers) {
+          passengerNamesList = details.passengers.map((p: any) => p.name || '');
+        }
+        if (passengerNamesList.length === 0) {
+          passengerNamesList = [row.passenger_name || details.passengerName || 'Valued Customer'];
+        }
+
+        // Construct direct link
+        const baseAppUrl = lastSeenAppUrl || `http://localhost:3000`;
+        const viewBookingUrl = `${baseAppUrl}/bookings/edit/${row.id}`;
+
+        const subject = `⚠️ UPCOMING FLIGHT ALERT: CRM ID ${(row.crm_id || '').toUpperCase()} - DEPARTS SOON`;
+        const html = `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05); background-color: #ffffff;">
+            <div style="background: linear-gradient(135deg, #0f172a, #1e293b); padding: 32px 24px; text-align: center; color: white;">
+              <div style="display: inline-block; background-color: #ef4444; color: white; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 6px 12px; border-radius: 9999px; margin-bottom: 16px; border: 1px solid rgba(255,255,255,0.2);">
+                ⚠️ Urgent Departure Alert
+              </div>
+              <h2 style="margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -0.025em; line-height: 1.25;">Flight Departing in Under 72 Hours</h2>
+              <p style="margin: 8px 0 0 0; font-size: 13px; color: #94a3b8; font-weight: 500;">CRM ID: ${(row.crm_id || '').toUpperCase()} | Tenant: ${row.company_name || 'SkyWay Group'}</p>
+            </div>
+            <div style="padding: 32px 24px;">
+              <p style="font-size: 14px; line-height: 1.6; color: #334155; margin-top: 0; margin-bottom: 24px;">
+                Hello,
+              </p>
+              <p style="font-size: 14px; line-height: 1.6; color: #334155; margin-bottom: 24px;">
+                One of your assigned client bookings has an upcoming flight scheduled to depart in less than 72 hours. Please find the details below and ensure all final confirmations, check-ins, or requests are completed:
+              </p>
+              
+              <div style="background-color: #f8fafc; border-radius: 12px; border: 1px solid #f1f5f9; padding: 20px; margin-bottom: 32px;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                  <tr>
+                    <td style="padding: 8px 0; font-weight: 700; color: #64748b; width: 35%; text-transform: uppercase; letter-spacing: 0.05em; font-size: 11px;">Carrier Name</td>
+                    <td style="padding: 8px 0; color: #0f172a; font-weight: 600;">${(row.airline_name || '').toUpperCase()}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px 0; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; font-size: 11px;">PNR / Locator</td>
+                    <td style="padding: 8px 0; color: #2563eb; font-weight: 700; letter-spacing: 0.05em;">${(details.pnr || 'PENDING').toUpperCase()}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px 0; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; font-size: 11px;">Flight Route</td>
+                    <td style="padding: 8px 0; color: #0f172a; font-weight: 600;">${(details.origin || 'N/A').toUpperCase()} ➔ ${(details.destination || 'N/A').toUpperCase()}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px 0; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; font-size: 11px;">Departure Time</td>
+                    <td style="padding: 8px 0; color: #e11d48; font-weight: 700;">${new Date(depDateStr).toLocaleString()}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px 0; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; font-size: 11px;">Passenger(s)</td>
+                    <td style="padding: 8px 0; color: #0f172a; font-weight: 600;">${passengerNamesList.join(', ')}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px 0; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; font-size: 11px;">Status</td>
+                    <td style="padding: 8px 0;">
+                      <span style="background-color: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 6px; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;">${(row.status || 'pending').toUpperCase()}</span>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+
+              <div style="text-align: center; margin-bottom: 24px;">
+                <a href="${viewBookingUrl}" style="background-color: #2563eb; color: white; padding: 14px 28px; text-decoration: none; border-radius: 10px; font-weight: 700; font-size: 13px; display: inline-block; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25); text-transform: uppercase; letter-spacing: 0.05em; transition: all 0.2s ease;">
+                  Open & View Booking
+                </a>
+              </div>
+
+              <div style="margin-top: 32px; border-top: 1px solid #f1f5f9; padding-top: 24px; text-align: center;">
+                <p style="font-size: 11px; color: #94a3b8; line-height: 1.5; margin: 0;">
+                  This is an automatic notification dispatched by your CRM service.<br />
+                  To manage SMTP connections or details, please visit your account's Branding settings.
+                </p>
+              </div>
+            </div>
+          </div>
+        `;
+
+        // Send email
+        const transporter = createSmtpTransporter(smtpProfile);
+
+        for (const recipient of recipients) {
+          try {
+            await transporter.sendMail({
+              from: `"${row.company_name || smtpProfile.label || 'Secure CRM Alerts'}" <${smtpProfile.email}>`,
+              to: recipient,
+              subject: subject,
+              html: html
+            });
+            console.log(`[Upcoming Flight Alert Scheduler] Alert email sent successfully to ${recipient} for booking ${row.id}`);
+          } catch (sendErr: any) {
+            console.error(`[Upcoming Flight Alert Scheduler] Failed to send email to ${recipient}:`, sendErr.message);
+          }
+        }
+
+        // Mark as notified in database
+        const updatedDetails = {
+          ...details,
+          agentNotified72h: true,
+          agentNotified72hAt: new Date().toISOString()
+        };
+
+        await db.query('UPDATE bookings SET details = ? WHERE id = ?', [JSON.stringify(updatedDetails), row.id]);
+        console.log(`[Upcoming Flight Alert Scheduler] Marked booking ${row.id} as notified.`);
+      }
+    }
+  } catch (err: any) {
+    console.error('[Upcoming Flight Alert Scheduler] Error scanning bookings:', err.message);
+  }
+}
+
+async function triggerAirportSync() {
+  console.log("[Airport Seeder] Seeding small reliable local airport list as requested...");
+  const smallAirportList = [
+    { iata: 'AGS', name: 'Augusta Regional Airport', city: 'Augusta', state: 'GA', country: 'USA' },
+    { iata: 'LHR', name: 'London Heathrow Airport', city: 'London', state: 'ENG', country: 'UK' },
+    { iata: 'JFK', name: 'John F. Kennedy International Airport', city: 'New York', state: 'NY', country: 'USA' },
+    { iata: 'DXB', name: 'Dubai International Airport', city: 'Dubai', state: 'DXB', country: 'UAE' },
+    { iata: 'CDG', name: 'Charles de Gaulle Airport', city: 'Paris', state: 'IDF', country: 'France' },
+    { iata: 'SIN', name: 'Singapore Changi Airport', city: 'Singapore', state: 'SIN', country: 'Singapore' },
+    { iata: 'AMS', name: 'Amsterdam Airport Schiphol', city: 'Amsterdam', state: 'NH', country: 'Netherlands' },
+    { iata: 'ORD', name: 'O\'Hare International Airport', city: 'Chicago', state: 'IL', country: 'USA' },
+    { iata: 'ATL', name: 'Hartsfield-Jackson Atlanta International Airport', city: 'Atlanta', state: 'GA', country: 'USA' },
+    { iata: 'LAX', name: 'Los Angeles International Airport', city: 'Los Angeles', state: 'CA', country: 'USA' }
+  ];
+  for (const item of smallAirportList) {
+    await db.query(`INSERT INTO airports (iata, name, city, state, country) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name)`, [item.iata, item.name, item.city, item.state, item.country]);
+  }
+  return;
+}
+
+async function seedAirportsIfEmpty() {
+  try {
+    const [countRows]: any = await db.query("SELECT COUNT(*) as count FROM airports");
+    if (countRows[0].count > 0) {
+      console.log(`[Airport Seeder] Airports database table already has ${countRows[0].count} entries. Skipping automatic seeding.`);
+      return;
+    }
+    console.log("[Airport Seeder] Airports table is empty. Initiating background seeding from global airports database...");
+    
+    triggerAirportSync().catch(err => {
+      console.error("[Airport Seeder background error]:", err.message);
+    });
+  } catch (err: any) {
+    console.error("[Airport Seeder] Pre-check failed:", err.message);
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -195,6 +575,16 @@ async function startServer() {
   });
 
   app.use(express.json({ limit: '50mb' }));
+
+  // Capture the application's hosting URL
+  app.use((req, res, next) => {
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const host = req.headers['x-forwarded-host'] || req.get('host');
+    if (host && !host.includes('127.0.0.1') && !host.includes('localhost')) {
+      lastSeenAppUrl = `${proto}://${host}`;
+    }
+    next();
+  });
 
   // Global middleware to normalize branding logoUrl relative path into absolute URL for email template delivery
   app.use((req, res, next) => {
@@ -421,20 +811,110 @@ async function startServer() {
     { iata: "NAN", name: "Nadi Intl, Fiji" }
   ];
 
-  // Google Flights API mock for airports (Lightweight static in-memory provider)
-  app.get("/api/flights/airports", (req, res) => {
+  // Manual Airport Sync Endpoint
+  app.post("/api/airports/sync", async (req, res) => {
     try {
-      const q = (req.query.q as string)?.toLowerCase();
-      if (!q) return res.json([]);
+      console.log("[API] Manual Airport Sync requested.");
+      const count = await triggerAirportSync();
+      res.json({ success: true, count, message: `Successfully synchronized ${count} global airports into your local database.` });
+    } catch (err: any) {
+      console.error("[API] Airport sync failed:", err.message);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Google Flights API mock for airports (Lightweight static in-memory provider with live Travelpayouts hybrid failover)
+  app.get("/api/flights/airports", async (req, res) => {
+    try {
+      const q = (req.query.q as string)?.trim().toLowerCase();
+      if (!q) return res.json({ results: [] });
       
-      const filtered = MAJOR_AIRPORTS.filter((a: any) => {
-        return (a.iata && a.iata.toLowerCase().includes(q)) || 
-               (a.name && a.name.toLowerCase().includes(q));
-      }).slice(0, 10);
+      // 1. Fetch from our high-performance local database `airports` table
+      let localFiltered: any[] = [];
+      try {
+        const [rows]: any = await db.query(
+          `SELECT iata, name, city, state, country FROM airports 
+           WHERE iata = ? OR LOWER(name) LIKE ? OR LOWER(city) LIKE ? 
+           LIMIT 50`,
+          [q.toUpperCase(), `%${q}%`, `%${q}%`]
+        );
+        
+        localFiltered = rows.map((row: any) => ({
+          code: row.iata.toUpperCase(),
+          iata: row.iata.toUpperCase(),
+          name: row.name,
+          city: row.city || row.state || '',
+          country: row.country || ''
+        }));
+      } catch (dbErr: any) {
+        console.warn("[Airport DB Search] Query failed, falling back to static list:", dbErr.message);
+        // Fallback to static list if table not populated or failed
+        localFiltered = MAJOR_AIRPORTS.filter((a: any) => {
+          return (a.iata && a.iata.toLowerCase().includes(q)) || 
+                 (a.name && a.name.toLowerCase().includes(q));
+        }).map((a: any) => ({
+          code: a.iata.toUpperCase(),
+          iata: a.iata.toUpperCase(),
+          name: a.name,
+          city: a.name.split(',')[1]?.trim() || '',
+          country: a.name.split(',')[2]?.trim() || ''
+        }));
+      }
+
+      let apiResults: any[] = [];
       
+      // 2. Query Travelpayouts real-time global directory for micro & newly added airports
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2500); // 2.5s fast timeout
+        
+        const response = await fetch(`https://autocomplete.travelpayouts.com/places2?term=${encodeURIComponent(q)}&locale=en`, {
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+          const rawData = await response.json();
+          if (Array.isArray(rawData)) {
+            apiResults = rawData.map((item: any) => {
+              return {
+                code: (item.code || '').toUpperCase().trim(),
+                iata: (item.code || '').toUpperCase().trim(),
+                name: item.type === 'airport' ? item.name : (item.main_airport_name || item.name),
+                city: item.city_name || item.name || '',
+                country: item.country_name || ''
+              };
+            }).filter((item: any) => item.iata && item.iata.length === 3);
+          }
+        }
+      } catch (apiErr: any) {
+        console.warn("Travelpayouts API search bypassed or timed out:", apiErr.message);
+      }
+
+      // 3. Merge, deduplicate, and sort combined lists
+      const combined = [...localFiltered, ...apiResults];
+      const seen = new Set<string>();
+      const results: any[] = [];
+
+      for (const item of combined) {
+        if (!item.iata) continue;
+        const key = item.iata.toUpperCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          results.push({
+            code: key,
+            iata: key,
+            name: item.name,
+            city: item.city || '',
+            country: item.country || ''
+          });
+        }
+      }
+
       res.json({
-        provider: "Local Fast Air Travel DB (Lightweight)",
-        results: filtered
+        provider: "Hybrid Real-time Global Airport Directory",
+        results: results.slice(0, 15)
       });
     } catch (err) {
       console.error("Flights API Error:", err);
@@ -487,6 +967,17 @@ const AIRLINE_DOMAINS: Record<string, string> = {
   'aer lingus': 'aerlingus.com', 'finnair': 'finnair.com',
   'sas': 'flysas.com', 'norwegian': 'norwegian.com', 'iberia': 'iberia.com',
   'tap': 'flytap.com', 'turkish airlines': 'turkishairlines.com',
+  'thai': 'thaiairways.com', 'eva': 'evaair.com', 'korean': 'koreanair.com',
+  'asiana': 'flyasiana.com', 'vietnam': 'vietnamairlines.com', 'garuda': 'garuda-indonesia.com',
+  'malaysia': 'malaysiaairlines.com', 'philippine': 'philippineairlines.com',
+  'air asia': 'airasia.com', 'lion air': 'lionair.co.id', 'jetstar': 'jetstar.com',
+  'scoot': 'flyscoot.com', 'vueling': 'vueling.com', 'volotea': 'volotea.com',
+  'eurowings': 'eurowings.com', 'swiss': 'swiss.com', 'austrian': 'austrian.com',
+  'brussels': 'brusselsairlines.com', 'lot': 'lot.com', 'ita': 'itaspa.com',
+  'alitalia': 'alitalia.com', 'aegean': 'aegeanair.com', 'el al': 'elal.com',
+  'ethiopian': 'ethiopianairlines.com', 'kenya': 'kenya-airways.com', 'south african': 'flysaa.com',
+  'royal air maroc': 'royalairmaroc.com', 'egyptair': 'egyptair.com', 'air china': 'airchina.com.cn',
+  'china eastern': 'ceair.com', 'china southern': 'csair.com', 'hainan': 'hainanairlines.com',
 
   // Cruises
   'carnival': 'carnival.com', 'royal caribbean': 'royalcaribbean.com', 
@@ -513,10 +1004,77 @@ const getAirlineDomainAsync = async (name: string) => {
     if (cleanName.includes(key)) return domain;
   }
   
-  // Return clean fallback domain for logo
+  // Improved derivation logic
+  const core = cleanName
+    .replace(/\s*(airlines|airways|air|cruises|hotels|group|resorts|intl|international|express|connect|regional)\b/g, '')
+    .replace(/[^a-z0-9]/g, '');
+  
+  if (core.length > 1) {
+    return `${core}.com`;
+  }
+  
   const firstWord = cleanName.split(' ')[0].replace(/[^a-z0-9]/g, '');
-  return `${firstWord}.com`;
+  return firstWord.length > 1 ? `${firstWord}.com` : '';
 };
+
+async function getCompanyIdFromBooking(bookingIdOrCrmId: string): Promise<string> {
+  if (!bookingIdOrCrmId) return 'legacy-tenant-1';
+  try {
+    const [rows]: any = await db.query(
+      'SELECT company_id FROM bookings WHERE id = ? OR crm_id = ? LIMIT 1',
+      [bookingIdOrCrmId, bookingIdOrCrmId]
+    );
+    if (rows && rows.length > 0) {
+      return rows[0].company_id || 'legacy-tenant-1';
+    }
+  } catch (e) {}
+  return 'legacy-tenant-1';
+}
+
+async function logSentEmail({
+  companyId,
+  bookingId,
+  crmId,
+  recipient,
+  subject,
+  bodyHtml,
+  type,
+  sentBy,
+  dataSent
+}: {
+  companyId: string;
+  bookingId?: string;
+  crmId?: string;
+  recipient: string;
+  subject: string;
+  bodyHtml: string;
+  type: string;
+  sentBy?: string;
+  dataSent: any;
+}) {
+  try {
+    const id = 'mail_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now();
+    const finalCompanyId = companyId || 'legacy-tenant-1';
+    await db.query(
+      'INSERT INTO sent_emails (id, company_id, booking_id, crm_id, recipient, subject, body_html, type, sent_by, data_sent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        id,
+        finalCompanyId,
+        bookingId || null,
+        crmId || null,
+        recipient,
+        subject,
+        bodyHtml,
+        type,
+        sentBy || null,
+        dataSent ? JSON.stringify(dataSent) : null
+      ]
+    );
+    console.log(`[Email Logger] Successfully logged sent email to ${recipient}`);
+  } catch (err: any) {
+    console.error('[Email Logger] Failed to log sent email:', err.message);
+  }
+}
 
   // CRM Email API with SMTP Support
   app.post("/api/send-auth-email", async (req, res) => {
@@ -558,7 +1116,7 @@ const getAirlineDomainAsync = async (name: string) => {
     const currentAppUrl = appUrl || reqUrl;
     const authLink = `${currentAppUrl}/authorize/${bookingId}`;
     
-    const { finalAttachments, processedRichText, snapshotUrl } = processAttachmentsAndRichText(attachmentsList, packageRichText, snapshotBase64, bookingId);
+    const { finalAttachments, processedRichText, snapshotUrl } = await processAttachmentsAndRichText(attachmentsList, packageRichText, snapshotBase64, bookingId, req);
     
     let airlineDomainFinal = req.body.airlineDomain || await getAirlineDomainAsync(airlineName);
     if (airlineDomainFinal) {
@@ -581,13 +1139,13 @@ const getAirlineDomainAsync = async (name: string) => {
         // ignore
       }
     }
-
+    
     const html = generateAuthEmail({
       crmId: bookingId,
       airlineName,
       airlineDomain: airlineDomainFinal,
-      passengerName: passengerName || 'Valued Customer',
-      cardHolderName: cardHolderName || passengerName || 'Valued Customer',
+      passengerName: passengerName || (passengers && passengers[0] ? (typeof passengers[0] === 'string' ? passengers[0] : passengers[0].name) : 'Valued Customer'),
+      cardHolderName: cardHolderName || passengerName || (passengers && passengers[0] ? (typeof passengers[0] === 'string' ? passengers[0] : passengers[0].name) : 'Valued Customer'),
       cardLast4: cardLast4 || '',
       cardBrand: cardBrand || '',
       totalAmount,
@@ -620,21 +1178,12 @@ const getAirlineDomainAsync = async (name: string) => {
     
     if (profile && profile.appPassword) {
       try {
-        const cleanPassword = profile.appPassword.replace(/\s+/g, '');
-        const transporter = nodemailer.createTransport({
-          host: profile.host || 'smtp.gmail.com',
-          port: profile.port ? parseInt(profile.port) : 465,
-          secure: profile.port == 587 ? false : true,
-          auth: {
-            user: profile.email,
-            pass: cleanPassword
-          },
-          tls: { rejectUnauthorized: false }
-        });
+        const transporter = createSmtpTransporter(profile);
 
         await transporter.sendMail({
           from: `"${fromLabel || profile.label}" <${profile.email}>`,
           to: email,
+          bcc: branding?.bccEmail || process.env.BCC_EMAIL || undefined,
           subject: `${(airlineName || '').toUpperCase()} NEW BOOKING AUTHORISATION`,
           html: html,
           attachments: finalAttachments,
@@ -659,6 +1208,25 @@ const getAirlineDomainAsync = async (name: string) => {
         });
 
         console.log(`✅ SMTP SUCCESS: Sent via node-mailer to ${email}`);
+
+        // Log to sent_emails database table asynchronously
+        const cid = await getCompanyIdFromBooking(bookingId);
+        await logSentEmail({
+          companyId: cid,
+          bookingId,
+          crmId: bookingId,
+          recipient: email,
+          subject: `${(airlineName || '').toUpperCase()} NEW BOOKING AUTHORISATION`,
+          bodyHtml: html,
+          type: 'auth',
+          sentBy: profile.email,
+          dataSent: {
+            bookingId, email, airlineName, passengerName, totalAmount, currency, airlineCharges, serviceFee,
+            origin, destination, tripType, departureDate, arrivalDate, cabinClass, pnr, passengers, contact,
+            validatedGateway, cardLast4, cardHolderName, cardBrand
+          }
+        });
+
         return res.json({ 
           success: true, 
           message: `Authorization email successfully sent via ${profile.email}`,
@@ -735,14 +1303,9 @@ const getAirlineDomainAsync = async (name: string) => {
       }
     }
 
-    const processed = processAttachmentsAndRichText(finalAttachments, packageRichText, snapshotBase64, bookingId);
+    const processed = await processAttachmentsAndRichText(finalAttachments, packageRichText, snapshotBase64, bookingId, req);
     finalAttachments = processed.finalAttachments;
     const { processedRichText, snapshotUrl } = processed;
-
-    if (snapshotBase64) {
-      // It is already processed by processAttachmentsAndRichText
-    }
-
     let airlineDomainFinal = req.body.airlineDomain || await getAirlineDomainAsync(airlineName);
     if (airlineDomainFinal) {
       try {
@@ -797,21 +1360,12 @@ const getAirlineDomainAsync = async (name: string) => {
     
     if (profile && profile.appPassword) {
       try {
-        const cleanPassword = profile.appPassword.replace(/\s+/g, '');
-        const transporter = nodemailer.createTransport({
-          host: profile.host || 'smtp.gmail.com',
-          port: profile.port ? parseInt(profile.port) : 465,
-          secure: profile.port == 587 ? false : true,
-          auth: {
-            user: profile.email,
-            pass: cleanPassword
-          },
-          tls: { rejectUnauthorized: false }
-        });
+        const transporter = createSmtpTransporter(profile);
 
         await transporter.sendMail({
           from: `"${fromLabel || profile.label}" <${profile.email}>`,
           to: email,
+          bcc: branding?.bccEmail || process.env.BCC_EMAIL || undefined,
           subject: `${(airlineName || '').toUpperCase()} BOOKING CONFIRMATION ${(bookingId || '').toUpperCase()}`,
           html: html,
           attachments: finalAttachments,
@@ -835,6 +1389,23 @@ const getAirlineDomainAsync = async (name: string) => {
           }
         });
         console.log(`✅ SMTP SUCCESS: Sent confirmation via node-mailer to ${email}`);
+
+        const cid = await getCompanyIdFromBooking(bookingId);
+        await logSentEmail({
+          companyId: cid,
+          bookingId,
+          crmId: bookingId,
+          recipient: email,
+          subject: `${(airlineName || '').toUpperCase()} BOOKING CONFIRMATION ${(bookingId || '').toUpperCase()}`,
+          bodyHtml: html,
+          type: 'confirmation',
+          sentBy: profile.email,
+          dataSent: {
+            bookingId, email, airlineName, passengerName, totalAmount, currency, origin, destination, tripType,
+            departureDate, arrivalDate, cabinClass, pnr, passengers, contact, authEmail, authIp
+          }
+        });
+
         return res.json({ success: true, message: "Confirmation receipt sent to " + email });
       } catch (error: any) {
         console.error(`❌ SMTP FAILED:`, error);
@@ -853,7 +1424,7 @@ const getAirlineDomainAsync = async (name: string) => {
   });
 
   app.post("/api/send-refund-email", async (req, res) => {
-    const { bookingId, appUrl, email, crmId, airlineName, totalAmount, refundQuote, airlineCredits, airlineCharges, serviceFee, currency, pnr, passengerName, branding, fromEmail, fromLabel, packageRichText, snapshotBase64, attachments: attachmentsList, cardLast4, cardHolderName, refundType, cardBrand, passengers } = req.body;
+    const { bookingId, appUrl, email, crmId, airlineName, totalAmount, refundQuote, airlineCredits, airlineCharges, serviceFee, currency, pnr, passengerName, branding, fromEmail, fromLabel, validatedGateway, packageRichText, snapshotBase64, attachments: attachmentsList, cardLast4, cardHolderName, refundType, cardBrand, passengers } = req.body;
     
     if (!email || !fromEmail) {
       return res.status(400).json({ success: false, message: 'Missing recipient or sender email' });
@@ -867,8 +1438,8 @@ const getAirlineDomainAsync = async (name: string) => {
     const currentAppUrl = appUrl || reqUrl;
     const authLink = `${currentAppUrl}/authorize/${bookingId}`;
     
-    const { finalAttachments, processedRichText, snapshotUrl } = processAttachmentsAndRichText(attachmentsList, packageRichText, snapshotBase64, bookingId);
-
+    const { finalAttachments, processedRichText, snapshotUrl } = await processAttachmentsAndRichText(attachmentsList, packageRichText, snapshotBase64, bookingId, req);
+    
     let airlineDomainFinal = req.body.airlineDomain || await getAirlineDomainAsync(airlineName);
     if (airlineDomainFinal) {
       try {
@@ -888,7 +1459,7 @@ const getAirlineDomainAsync = async (name: string) => {
       } catch(e) {}
     }
 
-    const html = generateRefundEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, totalAmount, airlineCharges, serviceFee, refundQuote, airlineCredits, currency, pnr, passengerName, cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || '', cardBrand: cardBrand || '', branding, authLink, packageRichText: processedRichText, snapshotUrl, refundType, passengers });
+    const html = generateRefundEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, totalAmount, airlineCharges, serviceFee, refundQuote, airlineCredits, currency, pnr, passengerName: passengerName || (passengers && passengers[0] ? (typeof passengers[0] === 'string' ? passengers[0] : passengers[0].name) : 'Valued Customer'), cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || (passengers && passengers[0] ? (typeof passengers[0] === 'string' ? passengers[0] : passengers[0].name) : 'Valued Customer'), cardBrand: cardBrand || '', branding, authLink, validatedGateway, packageRichText: processedRichText, snapshotUrl, refundType, passengers });
 
     const profile = branding?.smtpProfiles?.find((p: any) => p.email === fromEmail);
     if (!profile || !profile.appPassword) {
@@ -896,20 +1467,33 @@ const getAirlineDomainAsync = async (name: string) => {
     }
 
     try {
-      const transporter = nodemailer.createTransport({
-        host: profile.host || 'smtp.gmail.com',
-        port: profile.port ? parseInt(profile.port) : 465,
-        secure: profile.port == 587 ? false : true,
-        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') },
-        tls: { rejectUnauthorized: false }
-      });
+      const transporter = createSmtpTransporter(profile);
       await transporter.sendMail({
         from: `"${fromLabel || profile.label}" <${profile.email}>`,
         to: email,
+        bcc: branding?.bccEmail || process.env.BCC_EMAIL || undefined,
         subject: `${(airlineName || '').toUpperCase()} REFUND PROCESSED ${(crmId || pnr || '').toUpperCase()}`,
         html: html,
         attachments: finalAttachments
       });
+
+      const cid = await getCompanyIdFromBooking(bookingId || crmId);
+      await logSentEmail({
+        companyId: cid,
+        bookingId: bookingId || crmId,
+        crmId: crmId || bookingId,
+        recipient: email,
+        subject: `${(airlineName || '').toUpperCase()} REFUND PROCESSED ${(crmId || pnr || '').toUpperCase()}`,
+        bodyHtml: html,
+        type: 'refund',
+        sentBy: profile.email,
+        dataSent: {
+          bookingId, email, crmId, airlineName, totalAmount, refundQuote, airlineCredits, airlineCharges,
+          serviceFee, currency, pnr, passengerName, validatedGateway, cardLast4, cardHolderName, refundType,
+          cardBrand, passengers
+        }
+      });
+
       return res.json({ success: true, message: "Refund receipt sent" });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: `SMTP Error: ${error.message}` });
@@ -931,8 +1515,8 @@ const getAirlineDomainAsync = async (name: string) => {
     const currentAppUrl = appUrl || reqUrl;
     const authLink = `${currentAppUrl}/authorize/${bookingId}`;
     
-    const { finalAttachments, processedRichText, snapshotUrl } = processAttachmentsAndRichText(attachmentsList, packageRichText, snapshotBase64, bookingId);
-
+    const { finalAttachments, processedRichText, snapshotUrl } = await processAttachmentsAndRichText(attachmentsList, packageRichText, snapshotBase64, bookingId, req);
+    
     let airlineDomainFinal = req.body.airlineDomain || await getAirlineDomainAsync(airlineName);
     if (airlineDomainFinal) {
       try {
@@ -952,7 +1536,7 @@ const getAirlineDomainAsync = async (name: string) => {
       } catch(e) {}
     }
 
-    const html = generateCancelEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, pnr, passengerName, cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || '', cardBrand: cardBrand || '', origin, destination, branding, authLink, validatedGateway, totalAmount: totalAmount || 0, airlineCharges, serviceFee, currency: currency || 'USD', refundQuote: refundQuote || 0, packageRichText: processedRichText, snapshotUrl, passengers });
+    const html = generateCancelEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, pnr, passengerName: passengerName || (passengers && passengers[0] ? (typeof passengers[0] === 'string' ? passengers[0] : passengers[0].name) : 'Valued Customer'), cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || (passengers && passengers[0] ? (typeof passengers[0] === 'string' ? passengers[0] : passengers[0].name) : 'Valued Customer'), cardBrand: cardBrand || '', origin, destination, branding, authLink, validatedGateway, totalAmount: totalAmount || 0, airlineCharges, serviceFee, currency: currency || 'USD', refundQuote: refundQuote || 0, packageRichText: processedRichText, snapshotUrl, passengers });
 
     const profile = branding?.smtpProfiles?.find((p: any) => p.email === fromEmail);
     if (!profile || !profile.appPassword) {
@@ -960,20 +1544,33 @@ const getAirlineDomainAsync = async (name: string) => {
     }
 
     try {
-      const transporter = nodemailer.createTransport({
-        host: profile.host || 'smtp.gmail.com',
-        port: profile.port ? parseInt(profile.port) : 465,
-        secure: profile.port == 587 ? false : true,
-        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') },
-        tls: { rejectUnauthorized: false }
-      });
+      const transporter = createSmtpTransporter(profile);
       await transporter.sendMail({
         from: `"${fromLabel || profile.label}" <${profile.email}>`,
         to: email,
+        bcc: branding?.bccEmail || process.env.BCC_EMAIL || undefined,
         subject: `${(airlineName || '').toUpperCase()} CANCEL & REBOOK ${(crmId || pnr || '').toUpperCase()}`,
         html: html,
         attachments: finalAttachments
       });
+
+      const cid = await getCompanyIdFromBooking(bookingId || crmId);
+      await logSentEmail({
+        companyId: cid,
+        bookingId: bookingId || crmId,
+        crmId: crmId || bookingId,
+        recipient: email,
+        subject: `${(airlineName || '').toUpperCase()} CANCEL & REBOOK ${(crmId || pnr || '').toUpperCase()}`,
+        bodyHtml: html,
+        type: 'cancel',
+        sentBy: profile.email,
+        dataSent: {
+          bookingId, email, crmId, airlineName, pnr, passengerName, origin, destination, validatedGateway,
+          totalAmount, airlineCharges, serviceFee, refundQuote, currency, cardLast4, cardHolderName, cardBrand,
+          passengers
+        }
+      });
+
       return res.json({ success: true, message: "Cancellation notice sent" });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: `SMTP Error: ${error.message}` });
@@ -995,8 +1592,8 @@ const getAirlineDomainAsync = async (name: string) => {
     const currentAppUrl = appUrl || reqUrl;
     const authLink = `${currentAppUrl}/authorize/${bookingId}`;
     
-    const { finalAttachments, processedRichText, snapshotUrl } = processAttachmentsAndRichText(attachmentsList, packageRichText, snapshotBase64, bookingId);
-
+    const { finalAttachments, processedRichText, snapshotUrl } = await processAttachmentsAndRichText(attachmentsList, packageRichText, snapshotBase64, bookingId, req);
+    
     let airlineDomainFinal = req.body.airlineDomain || await getAirlineDomainAsync(airlineName);
     if (airlineDomainFinal) {
       try {
@@ -1016,7 +1613,7 @@ const getAirlineDomainAsync = async (name: string) => {
       } catch(e) {}
     }
 
-    const html = generateChangesEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, pnr, oldPnr, modificationDetails, passengerName, cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || '', cardBrand: cardBrand || '', origin, destination, branding, authLink, validatedGateway, totalAmount: totalAmount || 0, airlineCharges, serviceFee, currency: currency || 'USD', refundQuote: refundQuote || 0, packageRichText: processedRichText, snapshotUrl, passengers });
+    const html = generateChangesEmail({ crmId, airlineName, airlineDomain: airlineDomainFinal, pnr, oldPnr, modificationDetails, passengerName: passengerName || (passengers && passengers[0] ? (typeof passengers[0] === 'string' ? passengers[0] : passengers[0].name) : 'Valued Customer'), cardLast4: cardLast4 || '', cardHolderName: cardHolderName || passengerName || (passengers && passengers[0] ? (typeof passengers[0] === 'string' ? passengers[0] : passengers[0].name) : 'Valued Customer'), cardBrand: cardBrand || '', origin, destination, branding, authLink, validatedGateway, totalAmount: totalAmount || 0, airlineCharges, serviceFee, currency: currency || 'USD', refundQuote: refundQuote || 0, packageRichText: processedRichText, snapshotUrl, passengers });
 
     const profile = branding?.smtpProfiles?.find((p: any) => p.email === fromEmail);
     if (!profile || !profile.appPassword) {
@@ -1024,16 +1621,11 @@ const getAirlineDomainAsync = async (name: string) => {
     }
 
     try {
-      const transporter = nodemailer.createTransport({
-        host: profile.host || 'smtp.gmail.com',
-        port: profile.port ? parseInt(profile.port) : 465,
-        secure: profile.port == 587 ? false : true,
-        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') },
-        tls: { rejectUnauthorized: false }
-      });
+      const transporter = createSmtpTransporter(profile);
       await transporter.sendMail({
         from: `"${fromLabel || profile.label}" <${profile.email}>`,
         to: email,
+        bcc: branding?.bccEmail || process.env.BCC_EMAIL || undefined,
         subject: `${(airlineName || '').toUpperCase()} CHANGES ${(crmId || pnr || '').toUpperCase()}`,
         html: html,
         attachments: finalAttachments,
@@ -1056,6 +1648,24 @@ const getAirlineDomainAsync = async (name: string) => {
                    })
         }
       });
+
+      const cid = await getCompanyIdFromBooking(bookingId || crmId);
+      await logSentEmail({
+        companyId: cid,
+        bookingId: bookingId || crmId,
+        crmId: crmId || bookingId,
+        recipient: email,
+        subject: `${(airlineName || '').toUpperCase()} CHANGES ${(crmId || pnr || '').toUpperCase()}`,
+        bodyHtml: html,
+        type: 'changes',
+        sentBy: profile.email,
+        dataSent: {
+          bookingId, email, crmId, airlineName, pnr, oldPnr, modificationDetails, passengerName, origin,
+          destination, validatedGateway, totalAmount, airlineCharges, serviceFee, refundQuote, currency,
+          cardLast4, cardHolderName, cardBrand, passengers
+        }
+      });
+
       return res.json({ success: true, message: "Changes notification sent" });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: `SMTP Error: ${error.message}` });
@@ -1078,16 +1688,11 @@ const getAirlineDomainAsync = async (name: string) => {
     }
 
     try {
-      const transporter = nodemailer.createTransport({
-        host: profile.host || 'smtp.gmail.com',
-        port: profile.port ? parseInt(profile.port) : 465,
-        secure: profile.port == 587 ? false : true,
-        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') },
-        tls: { rejectUnauthorized: false }
-      });
+      const transporter = createSmtpTransporter(profile);
       await transporter.sendMail({
         from: `"Secure Auth CRM" <${profile.email}>`,
         to: tenantEmail,
+        bcc: settings?.bccEmail || process.env.BCC_EMAIL || undefined,
         subject: `Welcome - Secure Auth CRM Account Created`,
         html: html
       });
@@ -1111,13 +1716,7 @@ const getAirlineDomainAsync = async (name: string) => {
     }
 
     try {
-      const transporter = nodemailer.createTransport({
-        host: profile.host || 'smtp.gmail.com',
-        port: profile.port ? parseInt(profile.port) : 465,
-        secure: profile.port == 587 ? false : true,
-        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') },
-        tls: { rejectUnauthorized: false }
-      });
+      const transporter = createSmtpTransporter(profile);
 
       const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
@@ -1136,6 +1735,7 @@ const getAirlineDomainAsync = async (name: string) => {
       await transporter.sendMail({
         from: `"Secure Auth CRM" <${profile.email}>`,
         to: email,
+        bcc: settings?.bccEmail || process.env.BCC_EMAIL || undefined,
         subject: `Your Login Verification Code`,
         html: html
       });
@@ -1161,16 +1761,11 @@ const getAirlineDomainAsync = async (name: string) => {
     }
 
     try {
-      const transporter = nodemailer.createTransport({
-        host: profile.host || 'smtp.gmail.com',
-        port: profile.port ? parseInt(profile.port) : 465,
-        secure: profile.port == 587 ? false : true,
-        auth: { user: profile.email, pass: profile.appPassword.replace(/\s+/g, '') },
-        tls: { rejectUnauthorized: false }
-      });
+      const transporter = createSmtpTransporter(profile);
       await transporter.sendMail({
         from: `"Security Alerts" <${profile.email}>`,
         to: tenantEmail,
+        bcc: settings?.bccEmail || process.env.BCC_EMAIL || undefined,
         subject: `Security Alert: New Login Detected`,
         html: html
       });
@@ -1188,16 +1783,8 @@ const getAirlineDomainAsync = async (name: string) => {
       return res.status(400).json({ success: false, message: "Email and App Password required" });
     }
 
-    const cleanPassword = appPassword.replace(/\s+/g, '');
-
     try {
-      const transporter = nodemailer.createTransport({
-        host: host || 'smtp.gmail.com',
-        port: port ? parseInt(port) : 465,
-        secure: port == 587 ? false : true,
-        auth: { user: email, pass: cleanPassword },
-        tls: { rejectUnauthorized: false }
-      });
+      const transporter = createSmtpTransporter({ email, appPassword, label, host, port });
 
       // Verify connection configuration
       await transporter.verify();
@@ -1239,6 +1826,7 @@ const getAirlineDomainAsync = async (name: string) => {
   });
 
   app.use('/api/auth', authRoutes);
+  app.use('/uploads', express.static(path.join(process.cwd(), 'public', 'uploads')));
   app.use('/api', apiRoutes);
 
   // Vite middleware for development
@@ -1258,6 +1846,17 @@ const getAirlineDomainAsync = async (name: string) => {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    
+    // Auto-seed airports if database is currently empty
+    seedAirportsIfEmpty();
+
+    // Start the upcoming flight alerts scheduler
+    checkAndAlertUpcomingBookings();
+    setInterval(checkAndAlertUpcomingBookings, 5 * 60 * 1000); // Check every 5 minutes
+
+    // Start the auto-complete bookings scheduler
+    autoCompletePassedBookings();
+    setInterval(autoCompletePassedBookings, 5 * 60 * 1000); // Check every 5 minutes
   });
 }
 

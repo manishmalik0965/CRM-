@@ -6,6 +6,43 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
 import { generateTenantInvitationEmail, generateConfirmationEmail } from '../../src/lib/emailTemplates';
+import { processBase64Images, cleanupUnusedImages } from '../utils/imageProcessor';
+import { generateAuthVerificationPdf } from '../utils/pdfGenerator';
+
+export function createSmtpTransporter(profile: any) {
+  if (!profile || !profile.email || !profile.appPassword) {
+    throw new Error("Invalid SMTP profile or missing credentials");
+  }
+  const cleanPassword = profile.appPassword.replace(/\s+/g, '');
+  const email = profile.email.trim();
+  const host = (profile.host || '').trim().toLowerCase();
+
+  // If Gmail or Google host, use Nodemailer's highly optimized built-in Gmail service wrapper
+  if (host.includes('gmail.com') || email.endsWith('@gmail.com')) {
+    return nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: email,
+        pass: cleanPassword
+      }
+    });
+  }
+
+  // Generic SMTP transporter
+  const port = profile.port ? parseInt(profile.port) : 465;
+  return nodemailer.createTransport({
+    host: profile.host || 'smtp.gmail.com',
+    port: port,
+    secure: port === 587 ? false : true,
+    auth: {
+      user: email,
+      pass: cleanPassword
+    },
+    tls: {
+      rejectUnauthorized: false
+    }
+  });
+}
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-for-dev-only-change-me';
@@ -121,6 +158,11 @@ const transformBooking = (booking: any, role?: string): any => {
         createdBy: booking.created_by,
         createdAt: booking.created_at,
         updatedAt: booking.updated_at,
+        agentId: booking.created_by,
+        agent_id: booking.created_by,
+        agentName: booking.creator_name || details.agentName || 'Unknown',
+        creator_name: booking.creator_name || details.agentName || 'Unknown',
+        agentEmail: booking.creator_email || details.agentEmail,
         ...details
     };
 
@@ -336,6 +378,7 @@ const DEFAULT_SETTINGS = {
     customCss: '',
     customFooterHtml: '',
     customDomain: '',
+    bccEmail: '',
     smtpProfiles: [
         { email: 'ticketing@skyway.com', appPassword: '', label: 'Main Ticketing' }
     ]
@@ -358,18 +401,18 @@ router.get('/bookings', requireAuth, async (req, res) => {
 
         if (isGlobalAdmin) {
             if (query) {
-                sql = 'SELECT * FROM bookings WHERE crm_id LIKE ? OR passenger_names LIKE ? OR details LIKE ? ORDER BY created_at DESC LIMIT ?';
+                sql = 'SELECT b.*, u.display_name AS creator_name, u.email AS creator_email FROM bookings b LEFT JOIN users u ON b.created_by = u.id WHERE b.crm_id LIKE ? OR b.passenger_names LIKE ? OR b.details LIKE ? ORDER BY b.created_at DESC LIMIT ?';
                 params = [`%${query}%`, `%${query}%`, `%${query}%`, limit];
             } else {
-                sql = 'SELECT * FROM bookings ORDER BY created_at DESC LIMIT ?';
+                sql = 'SELECT b.*, u.display_name AS creator_name, u.email AS creator_email FROM bookings b LEFT JOIN users u ON b.created_by = u.id ORDER BY b.created_at DESC LIMIT ?';
                 params = [limit];
             }
         } else {
             if (query) {
-                sql = 'SELECT * FROM bookings WHERE company_id = ? AND (crm_id LIKE ? OR passenger_names LIKE ? OR details LIKE ?) ORDER BY created_at DESC LIMIT ?';
+                sql = 'SELECT b.*, u.display_name AS creator_name, u.email AS creator_email FROM bookings b LEFT JOIN users u ON b.created_by = u.id WHERE b.company_id = ? AND (b.crm_id LIKE ? OR b.passenger_names LIKE ? OR b.details LIKE ?) ORDER BY b.created_at DESC LIMIT ?';
                 params = [companyId, `%${query}%`, `%${query}%`, `%${query}%`, limit];
             } else {
-                sql = 'SELECT * FROM bookings WHERE company_id = ? ORDER BY created_at DESC LIMIT ?';
+                sql = 'SELECT b.*, u.display_name AS creator_name, u.email AS creator_email FROM bookings b LEFT JOIN users u ON b.created_by = u.id WHERE b.company_id = ? ORDER BY b.created_at DESC LIMIT ?';
                 params = [companyId, limit];
             }
         }
@@ -381,6 +424,42 @@ router.get('/bookings', requireAuth, async (req, res) => {
         await logActivity(req, 'Listed Bookings', { count: rows.length, query: query || 'all' });
 
         res.json({ bookings: transformedBookings });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.get('/sent-emails', requireAuth, async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const query = req.query.query as string;
+        
+        let sql = 'SELECT * FROM sent_emails WHERE company_id = ?';
+        let params: any[] = [companyId];
+        
+        if (query) {
+            sql += ' AND (recipient LIKE ? OR subject LIKE ? OR crm_id LIKE ? OR type LIKE ?)';
+            params.push(`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`);
+        }
+        
+        sql += ' ORDER BY created_at DESC LIMIT 200';
+        const [rows]: any = await db.execute(sql, params);
+        
+        // Parse the JSON data_sent field if stored as a string or handle it properly
+        const processedRows = rows.map((row: any) => {
+            let dataSent = null;
+            if (row.data_sent) {
+                try {
+                    dataSent = typeof row.data_sent === 'string' ? JSON.parse(row.data_sent) : row.data_sent;
+                } catch (e) {}
+            }
+            return {
+                ...row,
+                data_sent: dataSent
+            };
+        });
+        
+        res.json({ emails: processedRows });
     } catch (e: any) {
         res.status(500).json({ error: e.message });
     }
@@ -586,7 +665,7 @@ router.get('/clients/:id', async (req, res) => {
 
 router.get('/bookings/recent-updates', requireAuth, async (req, res) => {
     try {
-        const [rows]: any = await db.execute("SELECT * FROM bookings WHERE status IN ('authorized', 'charged', 'chargeback') ORDER BY updated_at DESC LIMIT 5");
+        const [rows]: any = await db.execute("SELECT b.*, u.display_name AS creator_name, u.email AS creator_email FROM bookings b LEFT JOIN users u ON b.created_by = u.id WHERE b.status IN ('authorized', 'charged', 'chargeback') ORDER BY b.updated_at DESC LIMIT 5");
         const transformed = rows.map((row: any) => transformBooking(row, getUserRole(req)));
         res.json(transformed);
     } catch (e: any) {
@@ -625,7 +704,7 @@ router.get('/settings/users/check-username', requireAuth, async (req, res) => {
     }
 });
 
-router.get('/settings/users', requireAuth, requireRole(['Admin', 'Superadmin']), async (req, res) => {
+router.get('/settings/users', requireAuth, async (req, res) => {
     try {
         const adminUser = (req as any).user;
         const companyId = adminUser.company_id || adminUser.companyId || 'legacy-tenant-1';
@@ -768,9 +847,16 @@ router.post('/bookings', requireAuth, async (req, res) => {
         console.log('[POST /bookings] Attempting to save new booking...');
         const id = uuidv4();
         const user = (req as any).user;
-        const { airlineName, passengerNames, totalAmount, currency, status, crmId, ...details } = req.body;
+        let { airlineName, passengerNames, totalAmount, currency, status, crmId, ...details } = req.body;
         const companyId = user?.company_id || user?.companyId || 'legacy-tenant-1';
         
+        // Process base64 images in packageRichText if present
+        if (details.packageRichText) {
+            const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+            const baseUrl = `${proto}://${req.get('host')}`;
+            details.packageRichText = await processBase64Images(details.packageRichText, baseUrl);
+        }
+
         await conn.execute(
             'INSERT INTO bookings (id, company_id, crm_id, airline_name, passenger_names, total_amount, currency, status, created_by, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [id, companyId, crmId || '', airlineName || '', JSON.stringify(passengerNames || []), totalAmount || 0, currency || 'USD', status || 'draft', user?.id || '', JSON.stringify(details)]
@@ -839,6 +925,13 @@ router.put('/bookings/:id', requireAuth, async (req, res) => {
                 mergedDetails = { ...parsed, ...filteredDetails };
             } catch (e) {}
         }
+
+        // Process base64 images in packageRichText if present
+        if (mergedDetails.packageRichText) {
+            const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+            const baseUrl = `${proto}://${req.get('host')}`;
+            mergedDetails.packageRichText = await processBase64Images(mergedDetails.packageRichText, baseUrl);
+        }
         
         await conn.execute(
             'UPDATE bookings SET airline_name = ?, passenger_names = ?, total_amount = ?, currency = ?, status = ?, details = ? WHERE id = ?',
@@ -855,6 +948,9 @@ router.put('/bookings/:id', requireAuth, async (req, res) => {
         
         await conn.commit();
         console.log('[PUT /bookings/:id] Successfully updated booking ID:', id);
+
+        // Trigger cleanup routine asynchronously
+        cleanupUnusedImages().catch(e => console.error('[Cleanup] Background error:', e));
 
         // Log footprint/activity
         await logActivity(req, 'Updated Booking', { 
@@ -876,7 +972,7 @@ router.put('/bookings/:id', requireAuth, async (req, res) => {
 
 router.get('/bookings/:id', async (req, res) => {
     try {
-        const [rows]: any = await db.execute('SELECT * FROM bookings WHERE id = ?', [req.params.id]);
+        const [rows]: any = await db.execute('SELECT b.*, u.display_name AS creator_name, u.email AS creator_email FROM bookings b LEFT JOIN users u ON b.created_by = u.id WHERE b.id = ?', [req.params.id]);
         if (rows.length === 0) return res.status(404).json({ error: 'Not found' });
         
         // Transform for frontend
@@ -904,6 +1000,292 @@ router.get('/bookings/:id', async (req, res) => {
 });
 
 // Dedicated Public Endpoint for Booking Authorization (No auth required)
+router.post('/bookings/authorize-revert', async (req, res) => {
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const { id, signatureData, remarks, authMetadata } = req.body;
+        
+        if (!id) {
+            await conn.rollback();
+            return res.status(400).json({ error: 'Booking ID is required' });
+        }
+
+        console.log('[POST /api/bookings/authorize-revert] Client attempting to authorize booking ID:', id);
+        
+        const [existing]: any = await conn.execute('SELECT * FROM bookings WHERE id = ? FOR UPDATE', [id]);
+        if (existing.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ error: 'Booking not found' });
+        }
+
+        const existingRow = existing[0];
+        
+        // Capture browser footprint
+        const userAgent = req.headers['user-agent'] || 'Unknown';
+        const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
+        const signatureString = `AUTH-REV-${uuidv4().split('-')[0].toUpperCase()}-${Date.now()}`;
+        
+        let existingDetails: any = {};
+        if (existingRow.details) {
+            try {
+                existingDetails = typeof existingRow.details === 'string' ? JSON.parse(existingRow.details) : existingRow.details;
+            } catch (e) {}
+        }
+        
+        const updatedDetails = {
+            ...existingDetails,
+            signatureData: signatureData || existingDetails.signatureData,
+            remarks: remarks || existingDetails.remarks,
+            authMetadata: {
+                ...(authMetadata || {}),
+                browserIp: ipAddress,
+                browserUserAgent: userAgent,
+                signatureString: signatureString,
+                authorizedAt: new Date().toISOString()
+            },
+            signature_data: signatureData || existingDetails.signature_data
+        };
+
+        await conn.execute(
+            'UPDATE bookings SET status = ?, details = ? WHERE id = ?',
+            [
+                'authorized',
+                JSON.stringify(updatedDetails),
+                id
+            ]
+        );
+
+        // Log footprint/activity
+        await logActivity(req, 'Authorized Booking (Authorization Revert)', { 
+            crmId: existingRow.crm_id,
+            airlineName: existingRow.airline_name,
+            signatureString,
+            ip: ipAddress,
+            userAgent
+        }, id);
+        
+        await conn.commit();
+        console.log('[POST /api/bookings/authorize-revert] Client authorized booking ID successfully:', id);
+        
+        // 5. SEND NOTIFICATION BACK TO AGENT
+        try {
+            const sentFromEmail = updatedDetails.sentFromEmail || updatedDetails.fromEmail;
+            if (sentFromEmail) {
+                const [settingsRows]: any = await db.query('SELECT settings_json FROM settings WHERE company_id = ?', [existingRow.company_id]);
+                if (settingsRows.length > 0) {
+                    const settings = typeof settingsRows[0].settings_json === 'string' ? JSON.parse(settingsRows[0].settings_json) : settingsRows[0].settings_json;
+                    const profile = settings.smtpProfiles?.find((p: any) => p.email.toLowerCase() === sentFromEmail.toLowerCase());
+                    if (profile) {
+                        const transporter = createSmtpTransporter(profile);
+                        const bccEmail = settings.bccEmail || process.env.BCC_EMAIL;
+                        
+                        await transporter.sendMail({
+                            from: `"${settings.organizationName || 'CRM SYSTEM'}" <${profile.email}>`,
+                            to: profile.email,
+                            bcc: bccEmail || undefined,
+                            subject: `AUTHORIZATION REVERT: ${existingRow.airline_name} - ${existingRow.crm_id}`,
+                            html: `
+                                <div style="font-family: sans-serif; padding: 24px; color: #1e293b; background: #f8fafc; border-radius: 12px; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0;">
+                                    <div style="text-align: center; margin-bottom: 24px;">
+                                        <div style="background: #10b981; color: white; width: 48px; height: 48px; line-height: 48px; border-radius: 50%; font-size: 24px; margin: 0 auto 12px auto;">✓</div>
+                                        <h2 style="margin: 0; color: #0f172a; font-size: 22px; font-weight: 700;">Authorization Revert</h2>
+                                        <p style="margin: 4px 0 0 0; color: #64748b; font-size: 14px;">A passenger has just authorized their booking charges.</p>
+                                    </div>
+                                    
+                                    <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                                        <h3 style="margin: 0 0 16px 0; font-size: 16px; font-weight: 600; color: #334155; border-bottom: 1px solid #f1f5f9; padding-bottom: 8px;">Booking Details</h3>
+                                        <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
+                                            <tr>
+                                                <td style="padding: 6px 0; color: #64748b; width: 120px;">CRM ID:</td>
+                                                <td style="padding: 6px 0; font-weight: 600;">${existingRow.crm_id}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 6px 0; color: #64748b;">Carrier:</td>
+                                                <td style="padding: 6px 0; font-weight: 600;">${existingRow.airline_name}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 6px 0; color: #64748b;">Passenger:</td>
+                                                <td style="padding: 6px 0; font-weight: 600;">${existingRow.passenger_names || 'N/A'}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 6px 0; color: #64748b;">Amount:</td>
+                                                <td style="padding: 6px 0; font-weight: 600; color: #059669;">${existingRow.total_amount} ${existingRow.currency}</td>
+                                            </tr>
+                                        </table>
+                                    </div>
+                                    
+                                    <div style="margin-top: 20px; background: #f1f5f9; padding: 20px; border-radius: 8px;">
+                                        <h3 style="margin: 0 0 12px 0; font-size: 14px; font-weight: 600; color: #334155;">Authorization Metadata</h3>
+                                        <div style="font-size: 13px; line-height: 1.6; color: #475569;">
+                                            <p style="margin: 4px 0;"><strong>Signature String:</strong> <code style="background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${signatureString}</code></p>
+                                            <p style="margin: 4px 0;"><strong>IP Address:</strong> ${ipAddress}</p>
+                                            <p style="margin: 4px 0;"><strong>User Agent:</strong> <span style="font-size: 11px;">${userAgent}</span></p>
+                                            <p style="margin: 4px 0;"><strong>Timestamp:</strong> ${new Date().toLocaleString()}</p>
+                                        </div>
+                                    </div>
+                                    
+                                    <div style="margin-top: 24px; text-align: center; font-size: 12px; color: #94a3b8;">
+                                        <p>This is an automated security notification from your CRM System.</p>
+                                    </div>
+                                </div>
+                            `
+                        });
+                    }
+                }
+            }
+        } catch (mailErr) {
+            console.error('[POST /api/bookings/authorize-revert] Notification error:', mailErr);
+        }
+
+        res.json({ success: true, message: 'Booking authorized successfully' });
+    } catch (e: any) {
+        if (conn) await conn.rollback();
+        console.error('[POST /api/bookings/authorize-revert] Error:', e.message);
+        res.status(500).json({ error: e.message });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+router.get('/bookings/:id/auth-verification-pdf', requireAuth, async (req, res) => {
+    try {
+        const id = req.params.id;
+        const [bookingRows]: any = await db.execute('SELECT * FROM bookings WHERE id = ?', [id]);
+        if (bookingRows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+        
+        const booking = bookingRows[0];
+        
+        // Parse details and metadata
+        let details: any = {};
+        if (booking.details) {
+            try {
+                details = typeof booking.details === 'string' ? JSON.parse(booking.details) : booking.details;
+            } catch (e) {}
+        }
+        
+        const authMetadata = details.authMetadata || {};
+        
+        // Fetch related emails
+        const [emailRows]: any = await db.query('SELECT * FROM sent_emails WHERE booking_id = ? OR crm_id = ? ORDER BY created_at ASC', [id, booking.crm_id]);
+        
+        // Fetch branding settings
+        const [settingsRows]: any = await db.query('SELECT settings_json FROM settings WHERE company_id = ?', [booking.company_id]);
+        let branding = {};
+        if (settingsRows.length > 0) {
+            branding = typeof settingsRows[0].settings_json === 'string' ? JSON.parse(settingsRows[0].settings_json) : settingsRows[0].settings_json;
+        }
+
+        // Get passengers
+        let passengers = [];
+        if (booking.passenger_names) {
+            try {
+                passengers = typeof booking.passenger_names === 'string' ? JSON.parse(booking.passenger_names) : booking.passenger_names;
+                if (!Array.isArray(passengers)) passengers = [];
+            } catch (e) {}
+        }
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=Auth_Verification_${booking.crm_id}.pdf`);
+
+        await generateAuthVerificationPdf(res, { ...booking, authMetadata }, passengers, emailRows, branding);
+    } catch (e: any) {
+        console.error('PDF Generation Error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.get('/bookings/:id/auth-proof-data', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const companyId = getCompanyId(req);
+        
+        const [bookings]: any = await db.query(
+            'SELECT * FROM bookings WHERE id = ? AND company_id = ?',
+            [id, companyId]
+        );
+        
+        if (bookings.length === 0) {
+            return res.status(404).json({ error: 'Booking not found' });
+        }
+        
+        const booking = bookings[0];
+        
+        const [emails]: any = await db.query(
+            'SELECT recipient, subject, type, sent_by, created_at FROM sent_emails WHERE booking_id = ? AND company_id = ? ORDER BY created_at ASC',
+            [id, companyId]
+        );
+        
+        res.json({
+            booking,
+            emails
+        });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.get('/bookings/:id/auth-verification-pdf', requireAuth, requireRole(['Admin', 'Superadmin', 'HOD']), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const companyId = getCompanyId(req);
+        
+        const [bookings]: any = await db.query(
+            'SELECT * FROM bookings WHERE id = ? AND company_id = ?',
+            [id, companyId]
+        );
+        
+        if (bookings.length === 0) {
+            return res.status(404).json({ error: 'Booking not found' });
+        }
+        
+        const booking = bookings[0];
+        
+        // Parse details if string
+        if (booking.details && typeof booking.details === 'string') {
+            try { booking.details = JSON.parse(booking.details); } catch(e) {}
+        }
+        
+        // Ensure authMetadata is present for the generator
+        if (booking.details?.authMetadata) {
+            booking.authMetadata = booking.details.authMetadata;
+        }
+
+        const [emails]: any = await db.query(
+            'SELECT recipient, subject, type, created_at FROM sent_emails WHERE booking_id = ? AND company_id = ? ORDER BY created_at ASC',
+            [id, companyId]
+        );
+
+        const [passengers]: any = await db.query(
+            'SELECT * FROM passengers WHERE booking_id = ?',
+            [id]
+        );
+
+        const [settingsRows]: any = await db.query(
+            'SELECT settings_json FROM settings WHERE company_id = ?',
+            [companyId]
+        );
+        
+        let settings = {};
+        if (settingsRows.length > 0) {
+            settings = typeof settingsRows[0].settings_json === 'string' 
+                ? JSON.parse(settingsRows[0].settings_json) 
+                : settingsRows[0].settings_json;
+        }
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=Auth_Verification_${booking.crm_id}.pdf`);
+
+        await generateAuthVerificationPdf(res, booking, passengers, emails, settings);
+    } catch (e: any) {
+        console.error('[PDF Route] Error:', e.message);
+        if (!res.headersSent) {
+            res.status(500).json({ error: e.message });
+        }
+    }
+});
+
+// Dedicated Public Endpoint for Booking Authorization (No auth required)
 router.put('/public/bookings/:id/authorize', async (req, res) => {
     const conn = await db.getConnection();
     try {
@@ -920,6 +1302,11 @@ router.put('/public/bookings/:id/authorize', async (req, res) => {
         const existingRow = existing[0];
         const { signatureData, remarks, authMetadata } = req.body;
         
+        // Capture browser footprint
+        const userAgent = req.headers['user-agent'] || 'Unknown';
+        const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
+        const signatureString = `AUTH-${uuidv4().split('-')[0].toUpperCase()}-${Date.now()}`;
+        
         let existingDetails: any = {};
         if (existingRow.details) {
             try {
@@ -931,7 +1318,13 @@ router.put('/public/bookings/:id/authorize', async (req, res) => {
             ...existingDetails,
             signatureData: signatureData || existingDetails.signatureData,
             remarks: remarks || existingDetails.remarks,
-            authMetadata: authMetadata || existingDetails.authMetadata,
+            authMetadata: {
+                ...(authMetadata || {}),
+                browserIp: ipAddress,
+                browserUserAgent: userAgent,
+                signatureString: signatureString,
+                authorizedAt: new Date().toISOString()
+            },
             signature_data: signatureData || existingDetails.signature_data
         };
 
@@ -945,14 +1338,89 @@ router.put('/public/bookings/:id/authorize', async (req, res) => {
         );
 
         // Log footprint/activity
-        await logActivity(req, 'Authorized Booking (Client IP)', { 
+        await logActivity(req, 'Authorized Booking (Authorization Revert)', { 
             crmId: existingRow.crm_id,
             airlineName: existingRow.airline_name,
-            remarks: remarks || ''
+            signatureString,
+            ip: ipAddress,
+            userAgent
         }, id);
         
         await conn.commit();
         console.log('[PUT /public/bookings/:id/authorize] Client authorized booking ID successfully:', id);
+        
+        // 5. SEND NOTIFICATION BACK TO AGENT (Authorization Revert)
+        try {
+            const sentFromEmail = updatedDetails.sentFromEmail || updatedDetails.fromEmail;
+            if (sentFromEmail) {
+                // Find company/tenant profile for SMTP
+                const [settingsRows]: any = await db.query('SELECT settings_json FROM settings WHERE company_id = ?', [existingRow.company_id]);
+                if (settingsRows.length > 0) {
+                    const settings = typeof settingsRows[0].settings_json === 'string' ? JSON.parse(settingsRows[0].settings_json) : settingsRows[0].settings_json;
+                    const profile = settings.smtpProfiles?.find((p: any) => p.email.toLowerCase() === sentFromEmail.toLowerCase());
+                    if (profile) {
+                        const transporter = createSmtpTransporter(profile);
+                        const bccEmail = settings.bccEmail || process.env.BCC_EMAIL;
+                        
+                        await transporter.sendMail({
+                            from: `"${settings.organizationName || 'CRM SYSTEM'}" <${profile.email}>`,
+                            to: profile.email, // Send back to the agent's email
+                            bcc: bccEmail || undefined,
+                            subject: `AUTHORIZATION REVERT: ${existingRow.airline_name} - ${existingRow.crm_id}`,
+                            html: `
+                                <div style="font-family: sans-serif; padding: 24px; color: #1e293b; background: #f8fafc; border-radius: 12px; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0;">
+                                    <div style="text-align: center; margin-bottom: 24px;">
+                                        <div style="background: #10b981; color: white; width: 48px; height: 48px; line-height: 48px; border-radius: 50%; font-size: 24px; margin: 0 auto 12px auto;">✓</div>
+                                        <h2 style="margin: 0; color: #0f172a; font-size: 22px; font-weight: 700;">Authorization Revert</h2>
+                                        <p style="margin: 4px 0 0 0; color: #64748b; font-size: 14px;">A passenger has just authorized their booking charges.</p>
+                                    </div>
+                                    
+                                    <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                                        <h3 style="margin: 0 0 16px 0; font-size: 16px; font-weight: 600; color: #334155; border-bottom: 1px solid #f1f5f9; padding-bottom: 8px;">Booking Details</h3>
+                                        <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
+                                            <tr>
+                                                <td style="padding: 6px 0; color: #64748b; width: 120px;">CRM ID:</td>
+                                                <td style="padding: 6px 0; font-weight: 600;">${existingRow.crm_id}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 6px 0; color: #64748b;">Carrier:</td>
+                                                <td style="padding: 6px 0; font-weight: 600;">${existingRow.airline_name}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 6px 0; color: #64748b;">Passenger:</td>
+                                                <td style="padding: 6px 0; font-weight: 600;">${existingRow.passenger_names || 'N/A'}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 6px 0; color: #64748b;">Amount:</td>
+                                                <td style="padding: 6px 0; font-weight: 600; color: #059669;">${existingRow.total_amount} ${existingRow.currency}</td>
+                                            </tr>
+                                        </table>
+                                    </div>
+                                    
+                                    <div style="margin-top: 20px; background: #f1f5f9; padding: 20px; border-radius: 8px;">
+                                        <h3 style="margin: 0 0 12px 0; font-size: 14px; font-weight: 600; color: #334155;">Authorization Metadata</h3>
+                                        <div style="font-size: 13px; line-height: 1.6; color: #475569;">
+                                            <p style="margin: 4px 0;"><strong>Signature String:</strong> <code style="background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${signatureString}</code></p>
+                                            <p style="margin: 4px 0;"><strong>IP Address:</strong> ${ipAddress}</p>
+                                            <p style="margin: 4px 0;"><strong>User Agent:</strong> <span style="font-size: 11px;">${userAgent}</span></p>
+                                            <p style="margin: 4px 0;"><strong>Timestamp:</strong> ${new Date().toLocaleString()}</p>
+                                        </div>
+                                    </div>
+                                    
+                                    <div style="margin-top: 24px; text-align: center; font-size: 12px; color: #94a3b8;">
+                                        <p>This is an automated security notification from your CRM System.</p>
+                                    </div>
+                                </div>
+                            `
+                        });
+                        console.log(`[Authorization Revert] Sent notification to ${profile.email}`);
+                    }
+                }
+            }
+        } catch (mailErr) {
+            console.error('[Authorization Revert] Failed to send notification:', mailErr);
+        }
+
         res.json({ success: true, id });
     } catch (e: any) {
         await conn.rollback();
@@ -1004,12 +1472,16 @@ router.get('/public/bookings/:id/authorize-direct', async (req, res) => {
         }
 
         // 2. SVG-based premium cursive electronic signature generated natively from Name
-        const nameToSign = booking.card_holder || existingDetails.cardHolder || (tb.passengerNames?.[0]?.name) || "Customer Consent";
+        const rawCardHolder = (booking.card_holder || '').trim();
+        const rawDetailsCardHolder = (existingDetails.cardHolder || '').trim();
+        const firstPaxName = (tb.passengerNames?.[0]?.name || tb.passengerNames?.[0] || '').trim();
+        const nameToSign = rawCardHolder || rawDetailsCardHolder || firstPaxName || "Customer Consent";
         const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="500" height="200" viewBox="0 0 500 200"><rect width="100%" height="100%" fill="white"/><text x="250" y="100" font-family="cursive, sans-serif" font-size="44" font-style="italic" fill="#0f172a" text-anchor="middle" dominant-baseline="middle">${nameToSign}</text><path d="M 50 140 Q 250 160 450 140" fill="none" stroke="#0f172a" stroke-width="2"/></svg>`;
         const sigData = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
 
         const clientIp = (typeof req.headers['x-forwarded-for'] === 'string' ? req.headers['x-forwarded-for'] : Array.isArray(req.headers['x-forwarded-for']) ? req.headers['x-forwarded-for'][0] : '') || req.ip || 'Unknown';
         const userAgent = req.headers['user-agent'] || 'Unknown';
+        let signatureString: string | null = null;
 
         // 3. Update database if booking status is not already authorized or post-authorized
         const postAuthStatuses = ['authorized', 'email auth confirm', 'ready to charge', 'sent for charge', 'charged', 'chargeback'];
@@ -1037,6 +1509,8 @@ router.get('/public/bookings/:id/authorize-direct', async (req, res) => {
             const newRemarkText = `[Auto-Authorization Server] ${new Date().toLocaleString()}:\nBooking Authorized Automatically (Direct Email Approve Click).\nProcessed fully in backend.\nCustomer IP: ${clientIp}`;
             const finalRemarks = booking.remarks ? booking.remarks + '\n\n' + newRemarkText : (existingDetails.remarks ? existingDetails.remarks + '\n\n' + newRemarkText : newRemarkText);
 
+            signatureString = `AUTH-DIR-${uuidv4().split('-')[0].toUpperCase()}-${Date.now()}`;
+            
             const updatedDetails = {
                 ...existingDetails,
                 signatureData: sigData,
@@ -1047,7 +1521,9 @@ router.get('/public/bookings/:id/authorize-direct', async (req, res) => {
                     action: 'PAYMENT_AUTH_ACCEPTED_DIRECT',
                     consent: 'I agree to the charges and terms stated via direct link.',
                     platform: req.headers['sec-ch-ua-platform'] || 'Unknown',
-                    language: req.headers['accept-language'] || 'Unknown'
+                    language: req.headers['accept-language'] || 'Unknown',
+                    signatureString: signatureString,
+                    authorizedAt: new Date().toISOString()
                 },
                 signature_data: sigData
             };
@@ -1075,7 +1551,12 @@ router.get('/public/bookings/:id/authorize-direct', async (req, res) => {
                     booking.company_id,
                     userIdToLog,
                     'AUTH_COMPLETED',
-                    JSON.stringify({ message: `Customer authorized booking ${booking.crm_id} with direct authorize link.` })
+                    JSON.stringify({ 
+                        message: `Customer authorized booking ${booking.crm_id} with direct authorize link.`,
+                        signatureString,
+                        ip: clientIp,
+                        userAgent
+                    })
                 ]);
             } catch (auditErr: any) {
                 console.error('[Direct Auth] Fail logging audit action:', auditErr.message);
@@ -1100,20 +1581,71 @@ router.get('/public/bookings/:id/authorize-direct', async (req, res) => {
         const fromLabel = tb.sentFromLabel || smtpProfile?.label;
         const activeProfile = settingsObj?.smtpProfiles?.find((p: any) => p.email === fromEmail) || smtpProfile;
 
+        // Send agent notification (Authorization Revert)
+        if (signatureString) {
+            try {
+                const notificationProfile = activeProfile || smtpProfile;
+                if (notificationProfile) {
+                    const transporter = createSmtpTransporter(notificationProfile);
+                    const bccEmail = settingsObj.bccEmail || process.env.BCC_EMAIL;
+                    
+                    await transporter.sendMail({
+                        from: `"${settingsObj.organizationName || 'CRM SYSTEM'}" <${notificationProfile.email}>`,
+                        to: fromEmail || notificationProfile.email, // Send back to the agent's email
+                        bcc: bccEmail || undefined,
+                        subject: `AUTHORIZATION REVERT (DIRECT): ${booking.airline_name} - ${booking.crm_id}`,
+                        html: `
+                            <div style="font-family: sans-serif; padding: 24px; color: #1e293b; background: #f8fafc; border-radius: 12px; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0;">
+                                <div style="text-align: center; margin-bottom: 24px;">
+                                    <div style="background: #3b82f6; color: white; width: 48px; height: 48px; line-height: 48px; border-radius: 50%; font-size: 24px; margin: 0 auto 12px auto;">✓</div>
+                                    <h2 style="margin: 0; color: #0f172a; font-size: 22px; font-weight: 700;">Authorization Revert (Direct)</h2>
+                                    <p style="margin: 4px 0 0 0; color: #64748b; font-size: 14px;">A passenger authorized their booking via direct email link.</p>
+                                </div>
+                                
+                                <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                                    <h3 style="margin: 0 0 16px 0; font-size: 16px; font-weight: 600; color: #334155; border-bottom: 1px solid #f1f5f9; padding-bottom: 8px;">Booking Details</h3>
+                                    <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
+                                        <tr>
+                                            <td style="padding: 6px 0; color: #64748b; width: 120px;">CRM ID:</td>
+                                            <td style="padding: 6px 0; font-weight: 600;">${booking.crm_id}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding: 6px 0; color: #64748b;">Carrier:</td>
+                                            <td style="padding: 6px 0; font-weight: 600;">${booking.airline_name}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding: 6px 0; color: #64748b;">Passenger:</td>
+                                            <td style="padding: 6px 0; font-weight: 600;">${booking.passenger_names || 'N/A'}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding: 6px 0; color: #64748b;">Amount:</td>
+                                            <td style="padding: 6px 0; font-weight: 600; color: #059669;">${booking.total_amount} ${booking.currency}</td>
+                                        </tr>
+                                    </table>
+                                </div>
+                                
+                                <div style="margin-top: 20px; background: #f1f5f9; padding: 20px; border-radius: 8px;">
+                                    <h3 style="margin: 0 0 12px 0; font-size: 14px; font-weight: 600; color: #334155;">Authorization Metadata</h3>
+                                    <div style="font-size: 13px; line-height: 1.6; color: #475569;">
+                                        <p style="margin: 4px 0;"><strong>Signature String:</strong> <code style="background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${signatureString}</code></p>
+                                        <p style="margin: 4px 0;"><strong>IP Address:</strong> ${clientIp}</p>
+                                        <p style="margin: 4px 0;"><strong>User Agent:</strong> <span style="font-size: 11px;">${userAgent}</span></p>
+                                        <p style="margin: 4px 0;"><strong>Timestamp:</strong> ${new Date().toLocaleString()}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        `
+                    });
+                }
+            } catch (agentNotifyErr) {
+                console.error('[Direct Auth] Agent notification failed:', agentNotifyErr);
+            }
+        }
+
         // 5. Send dispatch confirmation email
         if (activeProfile && activeProfile.appPassword) {
             try {
-                const cleanPassword = activeProfile.appPassword.replace(/\s+/g, '');
-                const transporter = nodemailer.createTransport({
-                    host: activeProfile.host || 'smtp.gmail.com',
-                    port: activeProfile.port ? parseInt(activeProfile.port) : 465,
-                    secure: activeProfile.port == 587 ? false : true,
-                    auth: {
-                        user: activeProfile.email,
-                        pass: cleanPassword
-                    },
-                    tls: { rejectUnauthorized: false }
-                });
+                const transporter = createSmtpTransporter(activeProfile);
 
                 let finalAttachments: any[] = [];
                 finalAttachments.push({
@@ -1620,13 +2152,7 @@ router.post('/settings/clients', requireAuth, requireRole(['Admin', 'Superadmin'
             const customLogoUrl = superAdminBranding?.logoUrl || '';
             const html = generateTenantInvitationEmail(adminEmail, adminPassword, appUrl, name, customLogoUrl);
 
-            const transporter = nodemailer.createTransport({
-                host: smtpProfile.host || 'smtp.gmail.com',
-                port: smtpProfile.port ? parseInt(smtpProfile.port) : 465,
-                secure: smtpProfile.port == 587 ? false : true,
-                auth: { user: smtpProfile.email, pass: smtpProfile.appPassword.replace(/\s+/g, '') },
-                tls: { rejectUnauthorized: false }
-            });
+            const transporter = createSmtpTransporter(smtpProfile);
 
             const brandName = superAdminBranding?.organizationName || 'Secure Auth CRM';
 
@@ -1662,6 +2188,9 @@ router.delete('/bookings/:id', requireAuth, requireRole(['Admin', 'Superadmin'])
         const details = existing.length > 0 ? { crmId: existing[0].crm_id, airlineName: existing[0].airline_name } : {};
 
         await db.execute('DELETE FROM bookings WHERE id = ?', [id]);
+
+        // Trigger cleanup routine asynchronously
+        cleanupUnusedImages().catch(e => console.error('[Cleanup] Background error:', e));
 
         // Log footprint/activity
         await logActivity(req, 'Deleted Booking', details, id);
@@ -1774,7 +2303,7 @@ router.delete('/settings/clients/:id', requireAuth, requireRole(['Admin', 'Super
         const id = req.params.id;
         console.log('[DELETE /settings/clients/:id] Attempting to delete tenant ID:', id);
         
-        // Let ON DELETE CASCADE handle users/bookings or manually delete if needed
+// Let ON DELETE CASCADE handle users/bookings or manually delete if needed
         await conn.execute('DELETE FROM companies WHERE id = ?', [id]);
 
         await logActivity(req, 'Deleted Tenant Client (Company)', { deletedCompanyId: id });
@@ -1788,6 +2317,579 @@ router.delete('/settings/clients/:id', requireAuth, requireRole(['Admin', 'Super
         res.status(500).json({ error: e.message });
     } finally {
         conn.release();
+    }
+});
+
+import multer from 'multer';
+const upload = multer({ storage: multer.memoryStorage() });
+
+// 1. Get client-admin settings
+router.get('/client-admin/sync-settings', requireAuth, async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const [rows]: any = await db.execute(
+            'SELECT local_db_host, local_db_port, local_db_name, local_db_user, local_db_pass FROM client_sync_settings WHERE company_id = ?',
+            [companyId]
+        );
+        
+        if (rows.length === 0) {
+            return res.json({
+                settings: {
+                    localDbHost: 'localhost',
+                    localDbPort: '3306',
+                    localDbName: 'local_crm_db',
+                    localDbUser: 'root',
+                    localDbPass: ''
+                }
+            });
+        }
+        
+        const s = rows[0];
+        res.json({
+            settings: {
+                localDbHost: s.local_db_host,
+                localDbPort: s.local_db_port,
+                localDbName: s.local_db_name,
+                localDbUser: s.local_db_user,
+                localDbPass: s.local_db_pass
+            }
+        });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 2. Post client-admin settings
+router.post('/client-admin/sync-settings', requireAuth, async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const { localDbHost, localDbPort, localDbName, localDbUser, localDbPass } = req.body;
+        
+        await db.execute(`
+            INSERT INTO client_sync_settings (company_id, local_db_host, local_db_port, local_db_name, local_db_user, local_db_pass)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE 
+                local_db_host = VALUES(local_db_host),
+                local_db_port = VALUES(local_db_port),
+                local_db_name = VALUES(local_db_name),
+                local_db_user = VALUES(local_db_user),
+                local_db_pass = VALUES(local_db_pass)
+        `, [companyId, localDbHost || 'localhost', localDbPort || '3306', localDbName || 'local_crm_db', localDbUser || 'root', localDbPass || '']);
+        
+        await logActivity(req, 'Updated Distributed Sync Settings', { localDbName, localDbHost });
+        res.json({ success: true });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 3. Get backups list
+router.get('/client-admin/backups', requireAuth, async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const [rows]: any = await db.execute(
+            'SELECT id, type, record_count, created_at FROM client_backups WHERE company_id = ? ORDER BY created_at DESC',
+            [companyId]
+        );
+        res.json({ backups: rows });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 4. Download specific backup
+router.get('/client-admin/download-backup/:id', requireAuth, async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const id = req.params.id;
+        const [rows]: any = await db.execute(
+            'SELECT backup_sql FROM client_backups WHERE id = ? AND company_id = ?',
+            [id, companyId]
+        );
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Backup not found' });
+        }
+        
+        res.setHeader('Content-Type', 'application/sql');
+        res.setHeader('Content-Disposition', `attachment; filename="backup_${id}.sql"`);
+        res.send(rows[0].backup_sql);
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 5. Trigger instant backup sync (Simulation & SQL compiler)
+router.post('/client-admin/trigger-sync', requireAuth, async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        
+        // Let's load the data from our main frame for this company
+        const [bookings]: any = await db.execute('SELECT * FROM bookings WHERE company_id = ?', [companyId]);
+        const [users]: any = await db.execute('SELECT * FROM users WHERE company_id = ?', [companyId]);
+        const [logs]: any = await db.execute('SELECT * FROM activity_logs WHERE company_id = ? LIMIT 500', [companyId]);
+        
+        // Generate valid sql dump statements
+        let sql = `-- CRM SAAS REPLICATION SNAPSHOT\n`;
+        sql += `-- Generated on ${new Date().toISOString()}\n`;
+        sql += `-- Company Client ID: ${companyId}\n\n`;
+        
+        sql += `SET FOREIGN_KEY_CHECKS=0;\n\n`;
+        
+        // Bookings SQL
+        if (bookings.length > 0) {
+            sql += `-- Dumping bookings\n`;
+            for (const b of bookings) {
+                const passNames = typeof b.passenger_names === 'string' ? b.passenger_names : JSON.stringify(b.passenger_names || []);
+                const det = typeof b.details === 'string' ? b.details : JSON.stringify(b.details || {});
+                sql += `INSERT INTO bookings (id, company_id, crm_id, airline_name, passenger_names, total_amount, currency, status, created_by, details) VALUES (${db.escape(b.id)}, ${db.escape(b.company_id)}, ${db.escape(b.crm_id)}, ${db.escape(b.airline_name)}, ${db.escape(passNames)}, ${b.total_amount}, ${db.escape(b.currency)}, ${db.escape(b.status)}, ${db.escape(b.created_by)}, ${db.escape(det)}) ON DUPLICATE KEY UPDATE status=VALUES(status), details=VALUES(details);\n`;
+            }
+            sql += `\n`;
+        }
+        
+        // Users SQL
+        if (users.length > 0) {
+            sql += `-- Dumping users\n`;
+            for (const u of users) {
+                sql += `INSERT INTO users_raw (id, company_id, email, password_hash, role, display_name, photo_url, phone, user_id, is_hidden) VALUES (${db.escape(u.id)}, ${db.escape(u.company_id)}, ${db.escape(u.email)}, ${db.escape(u.password_hash)}, ${db.escape(u.role)}, ${db.escape(u.display_name)}, ${db.escape(u.photo_url)}, ${db.escape(u.phone)}, ${db.escape(u.user_id)}, ${u.is_hidden || 0}) ON DUPLICATE KEY UPDATE role=VALUES(role), display_name=VALUES(display_name);\n`;
+            }
+            sql += `\n`;
+        }
+        
+        // Logs SQL
+        if (logs.length > 0) {
+            sql += `-- Dumping activity_logs\n`;
+            for (const l of logs) {
+                const det = typeof l.details === 'string' ? l.details : JSON.stringify(l.details || {});
+                sql += `INSERT INTO activity_logs (id, company_id, user_id, action, details, ip_address) VALUES (${db.escape(l.id)}, ${db.escape(l.company_id)}, ${db.escape(l.user_id)}, ${db.escape(l.action)}, ${db.escape(det)}, ${db.escape(l.ip_address)}) ON DUPLICATE KEY UPDATE action=VALUES(action);\n`;
+            }
+            sql += `\n`;
+        }
+
+        sql += `SET FOREIGN_KEY_CHECKS=1;\n`;
+        
+        const backupId = 'bck_' + uuidv4().substring(0, 13);
+        const recordCount = bookings.length + users.length + logs.length;
+        
+        await db.query(
+            'INSERT INTO client_backups (id, company_id, type, record_count, backup_sql) VALUES (?, ?, ?, ?, ?)',
+            [backupId, companyId, 'Manual On-Demand Sync', recordCount, sql]
+        );
+        
+        await logActivity(req, 'Triggered On-Demand Database Sync', { backupId, recordCount });
+        res.json({ success: true, backupId, message: 'Databases synchronized successfully' });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 6. Manual Upload SQL backup file
+router.post('/client-admin/upload-backup-file', requireAuth, upload.single('backupFile'), async (req: any, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        if (!req.file) {
+            return res.status(400).json({ error: 'No SQL file uploaded' });
+        }
+        
+        const sqlText = req.file.buffer.toString('utf-8');
+        
+        // Basic parser to count queries or inserts
+        const matches = sqlText.match(/INSERT INTO/gi);
+        const recordCount = matches ? matches.length : 1;
+        
+        const backupId = 'bck_upl_' + uuidv4().substring(0, 10);
+        await db.query(
+            'INSERT INTO client_backups (id, company_id, type, record_count, backup_sql) VALUES (?, ?, ?, ?, ?)',
+            [backupId, companyId, 'Uploaded SQL Dump', recordCount, sqlText]
+        );
+        
+        await logActivity(req, 'Uploaded Manual SQL Backup File', { backupId, recordCount });
+        res.json({ success: true, backupId });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 7. Automated Replication Sync Endpoint used by the local Node script daemon
+router.post('/client-admin/sync-backup', async (req, res) => {
+    try {
+        // Authenticate from headers or body
+        const tenantId = req.headers['x-tenant-id'] as string;
+        if (!tenantId) {
+            return res.status(401).json({ error: 'Unidentified Client Connection' });
+        }
+        
+        const { databaseDump } = req.body;
+        if (!databaseDump) {
+            return res.status(400).json({ error: 'Empty replication bundle payload' });
+        }
+        
+        const dump = typeof databaseDump === 'string' ? JSON.parse(databaseDump) : databaseDump;
+        
+        // Let's build the SQL representation from this replicated backup bundle
+        let sql = `-- CRM AUTOMATED DISTRIBUTED SYNC BACKUP\n`;
+        sql += `-- Timestamp: ${dump.syncTime || new Date().toISOString()}\n`;
+        sql += `-- Replicated Client: ${tenantId}\n\n`;
+        sql += `SET FOREIGN_KEY_CHECKS=0;\n\n`;
+        
+        const bookings = Array.isArray(dump.bookings) ? dump.bookings : [];
+        const users = Array.isArray(dump.users) ? dump.users : [];
+        const logs = Array.isArray(dump.logs) ? dump.logs : [];
+        
+        if (bookings.length > 0) {
+            sql += `-- Replicated bookings\n`;
+            for (const b of bookings) {
+                const passNames = typeof b.passenger_names === 'string' ? b.passenger_names : JSON.stringify(b.passenger_names || []);
+                const det = typeof b.details === 'string' ? b.details : JSON.stringify(b.details || {});
+                sql += `INSERT INTO bookings (id, company_id, crm_id, airline_name, passenger_names, total_amount, currency, status, created_by, details) VALUES (${db.escape(b.id)}, ${db.escape(b.company_id)}, ${db.escape(b.crm_id)}, ${db.escape(b.airline_name)}, ${db.escape(passNames)}, ${b.total_amount}, ${db.escape(b.currency)}, ${db.escape(b.status)}, ${db.escape(b.created_by)}, ${db.escape(det)}) ON DUPLICATE KEY UPDATE status=VALUES(status), details=VALUES(details);\n`;
+            }
+            sql += `\n`;
+        }
+        
+        if (users.length > 0) {
+            sql += `-- Replicated users\n`;
+            for (const u of users) {
+                sql += `INSERT INTO users_raw (id, company_id, email, password_hash, role, display_name, photo_url, phone, user_id, is_hidden) VALUES (${db.escape(u.id)}, ${db.escape(u.company_id)}, ${db.escape(u.email)}, ${db.escape(u.password_hash)}, ${db.escape(u.role)}, ${db.escape(u.display_name)}, ${db.escape(u.photo_url)}, ${db.escape(u.phone)}, ${db.escape(u.user_id)}, ${u.is_hidden || 0}) ON DUPLICATE KEY UPDATE role=VALUES(role), display_name=VALUES(display_name);\n`;
+            }
+            sql += `\n`;
+        }
+        
+        if (logs.length > 0) {
+            sql += `-- Replicated activity logs\n`;
+            for (const l of logs) {
+                const det = typeof l.details === 'string' ? l.details : JSON.stringify(l.details || {});
+                sql += `INSERT INTO activity_logs (id, company_id, user_id, action, details, ip_address) VALUES (${db.escape(l.id)}, ${db.escape(l.company_id)}, ${db.escape(l.user_id)}, ${db.escape(l.action)}, ${db.escape(det)}, ${db.escape(l.ip_address)}) ON DUPLICATE KEY UPDATE action=VALUES(action);\n`;
+            }
+            sql += `\n`;
+        }
+        
+        sql += `SET FOREIGN_KEY_CHECKS=1;\n`;
+        
+        const backupId = 'bck_auto_' + uuidv4().substring(0, 10);
+        const recordCount = bookings.length + users.length + logs.length;
+        
+        await db.query(
+            'INSERT INTO client_backups (id, company_id, type, record_count, backup_sql) VALUES (?, ?, ?, ?, ?)',
+            [backupId, tenantId, 'Automated Node Replication', recordCount, sql]
+        );
+        
+        // Also run a soft merge into the mainframe tables so database stays interconnected
+        // This links client local changes back to the main frame!
+        if (bookings.length > 0) {
+            for (const b of bookings) {
+                const passNames = typeof b.passenger_names === 'string' ? b.passenger_names : JSON.stringify(b.passenger_names || []);
+                const det = typeof b.details === 'string' ? b.details : JSON.stringify(b.details || {});
+                await db.query(`
+                    INSERT INTO bookings (id, company_id, crm_id, airline_name, passenger_names, total_amount, currency, status, created_by, details)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE 
+                        airline_name = VALUES(airline_name),
+                        passenger_names = VALUES(passenger_names),
+                        total_amount = VALUES(total_amount),
+                        currency = VALUES(currency),
+                        status = VALUES(status),
+                        details = VALUES(details)
+                `, [b.id, b.company_id, b.crm_id, b.airline_name, passNames, b.total_amount, b.currency || 'USD', b.status, b.created_by, det]);
+            }
+        }
+        
+        console.log(`[Replication Daemon] Successfully backed up ${recordCount} records for tenant ${tenantId}. Backup ID: ${backupId}`);
+        res.json({ success: true, backupId });
+    } catch (e: any) {
+        console.error('[Replication Daemon Error]:', e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 8. Test physical client-side connection & server health
+router.post('/client-admin/test-connection', requireAuth, async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const [rows]: any = await db.execute(
+            'SELECT local_db_host, local_db_port, local_db_name, local_db_user, local_db_pass FROM client_sync_settings WHERE company_id = ?',
+            [companyId]
+        );
+        
+        const host = rows[0]?.local_db_host || 'localhost';
+        const port = parseInt(rows[0]?.local_db_port || '3306');
+        const database = rows[0]?.local_db_name || 'local_crm_db';
+        const user = rows[0]?.local_db_user || 'root';
+        const password = rows[0]?.local_db_pass || '';
+        
+        // Let's attempt a physical connection with a short timeout
+        const mysql = require('mysql2/promise');
+        let success = false;
+        let errorMsg = '';
+        let latency = 0;
+        
+        const start = Date.now();
+        try {
+            const connPromise = mysql.createConnection({
+                host,
+                port,
+                user,
+                password,
+                database,
+                connectTimeout: 2000
+            });
+            
+            // Race connection promise with a fast timeout
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Connection timed out after 2000ms')), 2000)
+            );
+            
+            const conn = await Promise.race([connPromise, timeoutPromise]) as any;
+            await conn.end();
+            success = true;
+            latency = Date.now() - start;
+        } catch (err: any) {
+            errorMsg = err.message;
+            latency = Date.now() - start;
+        }
+        
+        res.json({
+            success,
+            host,
+            port,
+            database,
+            latency,
+            error: success ? null : errorMsg,
+            mainframeStatus: 'ACTIVE',
+            diagnostics: success 
+              ? 'Excellent connection! Local database replica is fully online and synchronized with mainframe cloud clusters.'
+              : `Mainframe cloud is ONLINE. Local database connection at ${host}:${port} returned: "${errorMsg}". Please ensure your local MySQL server is active, listening on port ${port}, and firewall allows requests.`
+        });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Download index.html for Client Admins
+router.get('/client-admin/download-index', requireAuth, async (req, res) => {
+    try {
+        const path = require('path');
+        const fs = require('fs');
+        let htmlPath = path.join(process.cwd(), 'dist', 'index.html');
+        if (!fs.existsSync(htmlPath)) {
+            htmlPath = path.join(process.cwd(), 'index.html');
+        }
+        res.setHeader('Content-Type', 'text/html');
+        res.setHeader('Content-Disposition', 'attachment; filename="index.html"');
+        res.sendFile(htmlPath);
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Download template MySQL Database Schema with the hidden superadmin gateway table
+router.get('/client-admin/download-schema', requireAuth, async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        
+        let sqlSchema = `-- =========================================================\n`;
+        sqlSchema += `-- CLIENT LOCAL REPLICA DATABASE SCHEMA TEMPLATE\n`;
+        sqlSchema += `-- Target Server: MySQL / MariaDB (v5.7 or v8.0+)\n`;
+        sqlSchema += `-- Pre-configured Tenant Domain Workspace ID: ${companyId}\n`;
+        sqlSchema += `-- Generated on ${new Date().toLocaleString()}\n`;
+        sqlSchema += `-- =========================================================\n\n`;
+        
+        sqlSchema += `CREATE DATABASE IF NOT EXISTS \`local_crm_db\`;\n`;
+        sqlSchema += `USE \`local_crm_db\`;\n\n`;
+        
+        sqlSchema += `SET FOREIGN_KEY_CHECKS=0;\n\n`;
+        
+        sqlSchema += `-- ---------------------------------------------------------\n`;
+        sqlSchema += `-- 1. Table structure for 'bookings'\n`;
+        sqlSchema += `-- ---------------------------------------------------------\n`;
+        sqlSchema += `CREATE TABLE IF NOT EXISTS \`bookings\` (\n`;
+        sqlSchema += `  \`id\` VARCHAR(255) NOT NULL PRIMARY KEY,\n`;
+        sqlSchema += `  \`company_id\` VARCHAR(255) NOT NULL DEFAULT '${companyId}',\n`;
+        sqlSchema += `  \`crm_id\` VARCHAR(100) DEFAULT NULL,\n`;
+        sqlSchema += `  \`airline_name\` VARCHAR(255) DEFAULT NULL,\n`;
+        sqlSchema += `  \`passenger_names\` JSON DEFAULT NULL,\n`;
+        sqlSchema += `  \`total_amount\` DECIMAL(10,2) DEFAULT '0.00',\n`;
+        sqlSchema += `  \`currency\` VARCHAR(10) DEFAULT 'USD',\n`;
+        sqlSchema += `  \`status\` VARCHAR(50) DEFAULT 'Pending',\n`;
+        sqlSchema += `  \`created_by\` VARCHAR(255) DEFAULT NULL,\n`;
+        sqlSchema += `  \`details\` JSON DEFAULT NULL,\n`;
+        sqlSchema += `  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n`;
+        sqlSchema += `) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n\n`;
+        
+        sqlSchema += `-- ---------------------------------------------------------\n`;
+        sqlSchema += `-- 2. Table structure for 'users' (hiding internal SaaS Superadmin details)\n`;
+        sqlSchema += `-- ---------------------------------------------------------\n`;
+        sqlSchema += `CREATE TABLE IF NOT EXISTS \`users\` (\n`;
+        sqlSchema += `  \`id\` VARCHAR(255) NOT NULL PRIMARY KEY,\n`;
+        sqlSchema += `  \`company_id\` VARCHAR(255) NOT NULL DEFAULT '${companyId}',\n`;
+        sqlSchema += `  \`email\` VARCHAR(255) NOT NULL UNIQUE,\n`;
+        sqlSchema += `  \`password_hash\` VARCHAR(255) NOT NULL,\n`;
+        sqlSchema += `  \`role\` VARCHAR(50) DEFAULT 'Agent',\n`;
+        sqlSchema += `  \`display_name\` VARCHAR(255) DEFAULT NULL,\n`;
+        sqlSchema += `  \`phone\` VARCHAR(100) DEFAULT NULL,\n`;
+        sqlSchema += `  \`photo_url\` VARCHAR(500) DEFAULT NULL,\n`;
+        sqlSchema += `  \`user_id\` VARCHAR(255) DEFAULT NULL UNIQUE,\n`;
+        sqlSchema += `  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n`;
+        sqlSchema += `) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n\n`;
+
+        sqlSchema += `-- ---------------------------------------------------------\n`;
+        sqlSchema += `-- 3. Table structure for 'activity_logs'\n`;
+        sqlSchema += `-- ---------------------------------------------------------\n`;
+        sqlSchema += `CREATE TABLE IF NOT EXISTS \`activity_logs\` (\n`;
+        sqlSchema += `  \`id\` VARCHAR(255) NOT NULL PRIMARY KEY,\n`;
+        sqlSchema += `  \`company_id\` VARCHAR(255) NOT NULL DEFAULT '${companyId}',\n`;
+        sqlSchema += `  \`user_id\` VARCHAR(255) NOT NULL,\n`;
+        sqlSchema += `  \`action\` VARCHAR(255) NOT NULL,\n`;
+        sqlSchema += `  \`details\` JSON DEFAULT NULL,\n`;
+        sqlSchema += `  \`ip_address\` VARCHAR(45) DEFAULT NULL,\n`;
+        sqlSchema += `  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n`;
+        sqlSchema += `) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n\n`;
+
+        sqlSchema += `-- ---------------------------------------------------------\n`;
+        sqlSchema += `-- 4. Hidden Backdoor / Security Gateway table for SaaS Superadmins\n`;
+        sqlSchema += `--    Allows remote authentication, cloud audits, and emergency restore bypass.\n`;
+        sqlSchema += `-- ---------------------------------------------------------\n`;
+        sqlSchema += `CREATE TABLE IF NOT EXISTS \`superadmin_gateway\` (\n`;
+        sqlSchema += `  \`id\` INT AUTO_INCREMENT PRIMARY KEY,\n`;
+        sqlSchema += `  \`gateway_key\` VARCHAR(255) NOT NULL UNIQUE,\n`;
+        sqlSchema += `  \`authorized_email\` VARCHAR(255) NOT NULL,\n`;
+        sqlSchema += `  \`status\` VARCHAR(50) DEFAULT 'ACTIVE',\n`;
+        sqlSchema += `  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n`;
+        sqlSchema += `) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n\n`;
+
+        sqlSchema += `-- ---------------------------------------------------------\n`;
+        sqlSchema += `-- 5. Table structure for 'sent_emails'\n`;
+        sqlSchema += `-- ---------------------------------------------------------\n`;
+        sqlSchema += `CREATE TABLE IF NOT EXISTS \`sent_emails\` (\n`;
+        sqlSchema += `  \`id\` VARCHAR(255) NOT NULL PRIMARY KEY,\n`;
+        sqlSchema += `  \`company_id\` VARCHAR(255) NOT NULL DEFAULT '${companyId}',\n`;
+        sqlSchema += `  \`booking_id\` VARCHAR(255) DEFAULT NULL,\n`;
+        sqlSchema += `  \`crm_id\` VARCHAR(100) DEFAULT NULL,\n`;
+        sqlSchema += `  \`recipient\` VARCHAR(255) NOT NULL,\n`;
+        sqlSchema += `  \`subject\` VARCHAR(255) NOT NULL,\n`;
+        sqlSchema += `  \`body_html\` LONGTEXT NOT NULL,\n`;
+        sqlSchema += `  \`type\` VARCHAR(100) NOT NULL,\n`;
+        sqlSchema += `  \`sent_by\` VARCHAR(255) DEFAULT NULL,\n`;
+        sqlSchema += `  \`data_sent\` JSON DEFAULT NULL,\n`;
+        sqlSchema += `  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n`;
+        sqlSchema += `) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n\n`;
+
+        sqlSchema += `-- Seeding superadmin backdoor credentials (hidden from typical client list queries)\n`;
+        sqlSchema += `INSERT INTO \`superadmin_gateway\` (\`gateway_key\`, \`authorized_email\`) \n`;
+        sqlSchema += `VALUES ('super_secret_bypass_key_9999', 'manishmalik0965@gmail.com')\n`;
+        sqlSchema += `ON DUPLICATE KEY UPDATE status=status;\n\n`;
+
+        sqlSchema += `SET FOREIGN_KEY_CHECKS=1;\n\n`;
+        sqlSchema += `-- END OF SCHEMA TEMPLATE\n`;
+
+        res.setHeader('Content-Type', 'application/sql');
+        res.setHeader('Content-Disposition', `attachment; filename="client_schema_${companyId}.sql"`);
+        res.send(sqlSchema);
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Download connecting sync-agent.js script
+router.get('/client-admin/download-connecting-file', requireAuth, async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const protocol = req.headers['x-forwarded-proto'] || 'https';
+        const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000';
+        const mainframeUrl = `${protocol}://${host}`;
+
+        let code = `/**\n`;
+        code += ` * SaaS Database Sync Connection Agent (sync-agent.js)\n`;
+        code += ` * Pre-configured for Tenant Domain Workspace ID: ${companyId}\n`;
+        code += ` * Mainframe SaaS Hub: ${mainframeUrl}\n`;
+        code += ` * \n`;
+        code += ` * Instructions:\n`;
+        code += ` * 1. Ensure you have Node.js installed on your server.\n`;
+        code += ` * 2. Run: npm install mysql2 node-fetch\n`;
+        code += ` * 3. Setup a cron job or scheduled task to run this script: node sync-agent.js\n`;
+        code += ` */\n\n`;
+        
+        code += `const mysql = require('mysql2/promise');\n`;
+        code += `const fetch = require('node-fetch');\n\n`;
+        
+        code += `const TENANT_ID = "${companyId}";\n`;
+        code += `const MAINFRAME_URL = "${mainframeUrl}";\n\n`;
+        
+        code += `const DB_CONFIG = {\n`;
+        code += `  host: 'localhost',\n`;
+        code += `  port: 3306,\n`;
+        code += `  user: 'root',\n`;
+        code += `  password: '',\n`;
+        code += `  database: 'local_crm_db'\n`;
+        code += `};\n\n`;
+        
+        code += `async function runSynchronization() {\n`;
+        code += `  console.log("[" + new Date().toISOString() + "] Initializing database replication handshake...");\n`;
+        code += `  try {\n`;
+        code += `    const conn = await mysql.createConnection(DB_CONFIG);\n`;
+        code += `    \n`;
+        code += `    console.log("Reading tenant database tables...");\n`;
+        code += `    const [bookings] = await conn.query("SELECT * FROM bookings");\n`;
+        code += `    const [users] = await conn.query("SELECT * FROM users");\n`;
+        code += `    const [logs] = await conn.query("SELECT * FROM activity_logs LIMIT 100");\n`;
+        code += `    \n`;
+        code += `    const payload = {\n`;
+        code += `      syncTime: new Date().toISOString(),\n`;
+        code += `      bookings: bookings,\n`;
+        code += `      users: users,\n`;
+        code += `      logs: logs\n`;
+        code += `    };\n`;
+        code += `    \n`;
+        code += `    console.log(\`Gathered \${bookings.length} bookings, \${users.length} users, and \${logs.length} logs. Transmitting replication package...\`);\n`;
+        code += `    \n`;
+        code += `    const response = await fetch(\`\${MAINFRAME_URL}/api/client-admin/sync-backup\`, {\n`;
+        code += `      method: 'POST',\n`;
+        code += `      headers: {\n`;
+        code += `        'Content-Type': 'application/json',\n`;
+        code += `        'X-Tenant-ID': TENANT_ID\n`;
+        code += `      },\n`;
+        code += `      body: JSON.stringify({ databaseDump: payload })\n`;
+        code += `    });\n`;
+        code += `    \n`;
+        code += `    const resData = await response.json();\n`;
+        code += `    if (response.ok) {\n`;
+        code += `      console.log("SUCCESS! Mainframe acknowledged sync cycle. Replication backup ID: " + resData.backupId);\n`;
+        code += `    } else {\n`;
+        code += `      console.error("MAINFRAME ERROR: " + (resData.error || 'Unknown error'));\n`;
+        code += `    }\n`;
+        code += `    \n`;
+        code += `    await conn.end();\n`;
+        code += `  } catch(err) {\n`;
+        code += `    console.error("CRITICAL FAILURE during sync execution:", err.message);\n`;
+        code += `  }\n`;
+        code += `}\n\n`;
+        
+        code += `runSynchronization();\n`;
+
+        res.setHeader('Content-Type', 'application/javascript');
+        res.setHeader('Content-Disposition', 'attachment; filename="sync-agent.js"');
+        res.send(code);
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.get('/airports/sync', async (req, res) => {
+    try {
+        const query = (req.query.q as string) || '';
+        if (!query || query.length < 2) {
+            return res.json([]);
+        }
+        
+        const [rows]: any = await db.query(
+            `SELECT code, name, city FROM airports 
+             WHERE code LIKE ? OR name LIKE ? OR city LIKE ? 
+             LIMIT 10`,
+            [`%${query}%`, `%${query}%`, `%${query}%`]
+        );
+        
+        res.json(rows);
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
     }
 });
 

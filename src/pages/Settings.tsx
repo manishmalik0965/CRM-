@@ -8,12 +8,14 @@ import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
-import { Mail, Shield, Bell, User, Plane, Save, Plus, Trash2, Building, Globe, Phone, Info } from 'lucide-react';
+import { Mail, Shield, Bell, User, Plane, Save, Plus, Trash2, Building, Globe, Phone, Info, RefreshCw, Database } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTenant } from '@/lib/tenant';
 import { api } from '@/lib/api';
 
 
+
+import { EmailForwardingSettings } from '@/components/EmailForwardingSettings';
 
 export default function Settings({ profile }: { profile?: any }) {
   const { clientId } = useTenant();
@@ -29,7 +31,8 @@ export default function Settings({ profile }: { profile?: any }) {
     primaryColor: '#0f172a',
     customCss: '',
     customFooterHtml: '',
-    customDomain: ''
+    customDomain: '',
+    bccEmail: ''
   });
 
   const [smtpProfiles, setSmtpProfiles] = useState<{email: string, appPassword: string, label: string, host?: string, port?: number | string}[]>([]);
@@ -38,6 +41,7 @@ export default function Settings({ profile }: { profile?: any }) {
   const [globalTwoFactorEnabled, setGlobalTwoFactorEnabled] = useState(false);
 
   const [systemStats, setSystemStats] = useState({ users: 0, bookings: 0 });
+  const [syncingAirports, setSyncingAirports] = useState(false);
   const isSystemAdmin = profile?.email === 'manishmalik0965@gmail.com';
   const canEditBranding = isSystemAdmin;
 
@@ -69,7 +73,8 @@ export default function Settings({ profile }: { profile?: any }) {
           primaryColor: data.primaryColor || '#0f172a',
           customCss: data.customCss || '',
           customFooterHtml: data.customFooterHtml || '',
-          customDomain: data.customDomain || ''
+          customDomain: data.customDomain || '',
+          bccEmail: data.bccEmail || ''
         });
 
         if (Array.isArray(data.smtpProfiles)) {
@@ -296,6 +301,14 @@ export default function Settings({ profile }: { profile?: any }) {
                         className="resize-none"
                       />
                   </div>
+
+                  <Separator />
+
+                  <EmailForwardingSettings 
+                    value={branding.bccEmail} 
+                    onChange={val => setBranding({...branding, bccEmail: val})}
+                    disabled={!canEditBranding}
+                  />
               </CardContent>
             </Card>
           )}
@@ -408,6 +421,15 @@ export default function Settings({ profile }: { profile?: any }) {
                                         value={ap.appPassword}
                                         onChange={(e) => updateSmtpProfile(idx, 'appPassword', e.target.value)}
                                     />
+                                    {ap.email?.endsWith('@gmail.com') && ap.appPassword && (
+                                      <div className="text-[9px] mt-1 font-semibold">
+                                        {ap.appPassword.replace(/\s+/g, '').length === 16 ? (
+                                          <span className="text-emerald-600">✓ Valid 16-character Gmail App Password format (spaces are automatically stripped)</span>
+                                        ) : (
+                                          <span className="text-amber-500">⚠ Gmail App Passwords must be exactly 16 letters (currently {ap.appPassword.replace(/\s+/g, '').length} characters)</span>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                                 <div className="flex justify-end">
@@ -466,6 +488,57 @@ export default function Settings({ profile }: { profile?: any }) {
                       className="data-[state=checked]:bg-blue-600"
                     />
                 </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border border-slate-200/80 dark:border-slate-800 shadow-md">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                  <Database className="w-4 h-4" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">System Directories & Maintenance</CardTitle>
+                  <CardDescription>Synchronize global aviation datasets for high-speed autocomplete airport searches</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-xs text-slate-500 leading-relaxed">
+                The CRM relies on a hybrid local/remote airport search database. If you are experiencing search latency or missing minor municipal runways, you can trigger a full sync with the global aviation dataset. This downloads, normalizes, and indexes over 5,000+ commercial, private, and regional airports globally.
+              </p>
+              
+              <div className="p-4 bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-800/80 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">Worldwide Airports Database Sync</h4>
+                  <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Recommended once per quarter or during initial system deployments</p>
+                </div>
+                <Button 
+                  disabled={syncingAirports}
+                  onClick={async () => {
+                    setSyncingAirports(true);
+                    const promise = api.post('/airports/sync').then(res => res.data);
+                    
+                    toast.promise(promise, {
+                      loading: 'Downloading & indexing global airport registries (takes 3-5 seconds)...',
+                      success: (data) => data.message || 'Successfully synchronized global airports directory!',
+                      error: (err) => err.response?.data?.error || err.message || 'Airport sync failed'
+                    });
+                    
+                    try {
+                      await promise;
+                    } catch(e) {
+                      console.error(e);
+                    } finally {
+                      setSyncingAirports(false);
+                    }
+                  }}
+                  className="gap-2 shrink-0 h-9 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white dark:bg-indigo-600"
+                >
+                  <RefreshCw className={syncingAirports ? "w-3.5 h-3.5 animate-spin" : "w-3.5 h-3.5"} />
+                  {syncingAirports ? 'Indexing Database...' : 'Sync Airports Now'}
+                </Button>
+              </div>
             </CardContent>
           </Card>
       </div>
