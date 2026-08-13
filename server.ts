@@ -1,11 +1,21 @@
 import express from "express";
+import compression from "compression";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import nodemailer from "nodemailer";
 import { v4 as uuidv4 } from 'uuid';
+import validateEnv from "./server/config/env.ts";
+
+// Validate environment variables and fail fast on startup if critical secrets missing
+const env = validateEnv();
+
 import { processBase64Images } from "./server/utils/imageProcessor.ts";
 import { generateAuthEmail, generateConfirmationEmail } from "./src/lib/emailTemplates.ts";
+import { securityHeaders, additionalPermissionsPolicy } from "./server/middleware/securityHeaders";
+import { requestLogger } from "./server/utils/logger";
+import { globalErrorHandler } from "./server/middleware/errorHandler";
+import { apiLimiter, authLimiter, publicAuthDocLimiter } from "./server/middleware/rateLimiter";
 import authRoutes from './server/routes/auth.routes';
 import apiRoutes from './server/routes/api.routes';
 import db from './server/database/connection';
@@ -352,7 +362,11 @@ async function autoCompletePassedBookings() {
       }
     }
   } catch (err: any) {
-    console.error('[Auto-Complete Scheduler] Error updating passed bookings:', err.message);
+    if (err.code === 'ER_ACCESS_DENIED_ERROR' || err.errno === 1045) {
+      console.warn('[Auto-Complete Scheduler] Database access denied. Skipping scheduled check until database connection is verified.');
+    } else {
+      console.error('[Auto-Complete Scheduler] Error updating passed bookings:', err.message);
+    }
   }
 }
 
@@ -557,28 +571,128 @@ async function checkAndAlertUpcomingBookings() {
       }
     }
   } catch (err: any) {
-    console.error('[Upcoming Flight Alert Scheduler] Error scanning bookings:', err.message);
+    if (err.code === 'ER_ACCESS_DENIED_ERROR' || err.errno === 1045) {
+      console.warn('[Upcoming Flight Alert Scheduler] Database access denied. Skipping scheduled check until database connection is verified.');
+    } else {
+      console.error('[Upcoming Flight Alert Scheduler] Error scanning bookings:', err.message);
+    }
+  }
+}
+
+async function checkAndSendBirthdayGreetings() {
+  console.log('[Birthday Greeting Scheduler] Running periodic birthday checks...');
+  try {
+    const today = new Date();
+    const todayMonth = today.getUTCMonth() + 1;
+    const todayDay = today.getUTCDate();
+
+    const [rows]: any = await db.query(`
+      SELECT b.*, c.name AS company_name
+      FROM bookings b
+      LEFT JOIN companies c ON b.company_id = c.id
+    `);
+
+    if (!rows || rows.length === 0) return;
+
+    for (const row of rows) {
+      let details: any = {};
+      try {
+        details = typeof row.details === 'string' ? JSON.parse(row.details) : row.details;
+      } catch (e) { continue; }
+
+      let passengers: any[] = [];
+      try {
+        passengers = typeof row.passenger_names === 'string' ? JSON.parse(row.passenger_names) : row.passenger_names;
+      } catch (e) {
+        if (details.passengers) passengers = details.passengers;
+      }
+
+      if (!Array.isArray(passengers)) continue;
+
+      for (const p of passengers) {
+        if (!p.dob) continue;
+        
+        const dob = new Date(p.dob);
+        if (isNaN(dob.getTime())) continue;
+
+        if (dob.getUTCMonth() + 1 === todayMonth && dob.getUTCDate() === todayDay) {
+          const recipientEmail = details.contact?.email || details.email || details.customerEmail;
+          if (!recipientEmail) continue;
+
+          const [alreadySent]: any = await db.query(
+            "SELECT id FROM sent_emails WHERE recipient = ? AND type = 'birthday' AND YEAR(created_at) = YEAR(CURDATE())",
+            [recipientEmail]
+          );
+
+          if (alreadySent.length > 0) continue;
+
+          let smtpProfile: any = null;
+          const [settingsRows]: any = await db.query('SELECT settings_json FROM settings WHERE company_id = ?', [row.company_id]);
+          if (settingsRows.length > 0) {
+            const settingsObj = typeof settingsRows[0].settings_json === 'string' ? JSON.parse(settingsRows[0].settings_json) : settingsRows[0].settings_json;
+            smtpProfile = settingsObj.smtpProfiles?.find((prof: any) => prof.email && prof.appPassword) || settingsObj.smtpProfiles?.[0];
+          }
+
+          if (!smtpProfile || !smtpProfile.appPassword) continue;
+
+          const { generateEmailTemplate } = await import('./src/lib/emailTemplates');
+          const html = generateEmailTemplate('birthday', {
+            passengerName: p.name || 'Valued Customer',
+            branding: { organizationName: row.company_name || 'SkyWay Travel' },
+            appUrl: lastSeenAppUrl
+          } as any);
+
+          try {
+            const transporter = createSmtpTransporter(smtpProfile);
+            await transporter.sendMail({
+              from: `"${row.company_name || smtpProfile.label || 'SkyWay Travel'}" <${smtpProfile.email}>`,
+              to: recipientEmail,
+              subject: `🎉 Happy Birthday ${p.name || ''}!`,
+              html: html
+            });
+
+            await db.query(
+               'INSERT INTO sent_emails (id, company_id, booking_id, crm_id, recipient, subject, body_html, type, sent_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+               [uuidv4(), row.company_id, row.id, row.crm_id, recipientEmail, `🎉 Happy Birthday ${p.name || ''}!`, html, 'birthday', smtpProfile.email]
+            );
+
+            console.log(`[Birthday Greeting Scheduler] Birthday email sent to ${recipientEmail}`);
+          } catch (mailErr: any) {
+            console.error(`[Birthday Greeting Scheduler] Mail send failed for ${recipientEmail}:`, mailErr.message);
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error('[Birthday Greeting Scheduler] Error scanning bookings:', err.message);
   }
 }
 
 async function triggerAirportSync() {
-  console.log("[Airport Seeder] Seeding small reliable local airport list as requested...");
-  const smallAirportList = [
-    { iata: 'AGS', name: 'Augusta Regional Airport', city: 'Augusta', state: 'GA', country: 'USA' },
-    { iata: 'LHR', name: 'London Heathrow Airport', city: 'London', state: 'ENG', country: 'UK' },
-    { iata: 'JFK', name: 'John F. Kennedy International Airport', city: 'New York', state: 'NY', country: 'USA' },
-    { iata: 'DXB', name: 'Dubai International Airport', city: 'Dubai', state: 'DXB', country: 'UAE' },
-    { iata: 'CDG', name: 'Charles de Gaulle Airport', city: 'Paris', state: 'IDF', country: 'France' },
-    { iata: 'SIN', name: 'Singapore Changi Airport', city: 'Singapore', state: 'SIN', country: 'Singapore' },
-    { iata: 'AMS', name: 'Amsterdam Airport Schiphol', city: 'Amsterdam', state: 'NH', country: 'Netherlands' },
-    { iata: 'ORD', name: 'O\'Hare International Airport', city: 'Chicago', state: 'IL', country: 'USA' },
-    { iata: 'ATL', name: 'Hartsfield-Jackson Atlanta International Airport', city: 'Atlanta', state: 'GA', country: 'USA' },
-    { iata: 'LAX', name: 'Los Angeles International Airport', city: 'Los Angeles', state: 'CA', country: 'USA' }
-  ];
-  for (const item of smallAirportList) {
-    await db.query(`INSERT INTO airports (iata, name, city, state, country) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name)`, [item.iata, item.name, item.city, item.state, item.country]);
+  try {
+    console.log("[Airport Seeder] Seeding small reliable local airport list as requested...");
+    const smallAirportList = [
+      { iata: 'AGS', name: 'Augusta Regional Airport', city: 'Augusta', state: 'GA', country: 'USA' },
+      { iata: 'LHR', name: 'London Heathrow Airport', city: 'London', state: 'ENG', country: 'UK' },
+      { iata: 'JFK', name: 'John F. Kennedy International Airport', city: 'New York', state: 'NY', country: 'USA' },
+      { iata: 'DXB', name: 'Dubai International Airport', city: 'Dubai', state: 'DXB', country: 'UAE' },
+      { iata: 'CDG', name: 'Charles de Gaulle Airport', city: 'Paris', state: 'IDF', country: 'France' },
+      { iata: 'SIN', name: 'Singapore Changi Airport', city: 'Singapore', state: 'SIN', country: 'Singapore' },
+      { iata: 'AMS', name: 'Amsterdam Airport Schiphol', city: 'Amsterdam', state: 'NH', country: 'Netherlands' },
+      { iata: 'ORD', name: 'O\'Hare International Airport', city: 'Chicago', state: 'IL', country: 'USA' },
+      { iata: 'ATL', name: 'Hartsfield-Jackson Atlanta International Airport', city: 'Atlanta', state: 'GA', country: 'USA' },
+      { iata: 'LAX', name: 'Los Angeles International Airport', city: 'Los Angeles', state: 'CA', country: 'USA' }
+    ];
+    for (const item of smallAirportList) {
+      await db.query(`INSERT INTO airports (iata, name, city, state, country) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name)`, [item.iata, item.name, item.city, item.state, item.country]);
+    }
+  } catch (err: any) {
+    if (err.code === 'ER_ACCESS_DENIED_ERROR' || err.errno === 1045) {
+      console.warn('[Airport Seeder] Database access denied during airport sync.');
+    } else {
+      console.error('[Airport Seeder background error]:', err.message);
+    }
   }
-  return;
 }
 
 async function seedAirportsIfEmpty() {
@@ -591,16 +705,50 @@ async function seedAirportsIfEmpty() {
     console.log("[Airport Seeder] Airports table is empty. Initiating background seeding from global airports database...");
     
     triggerAirportSync().catch(err => {
-      console.error("[Airport Seeder background error]:", err.message);
+      console.error("[Airport Seeder background error]:", err?.message || err);
     });
   } catch (err: any) {
-    console.error("[Airport Seeder] Pre-check failed:", err.message);
+    if (err.code === 'ER_ACCESS_DENIED_ERROR' || err.errno === 1045) {
+      console.warn('[Airport Seeder] Database access denied. Skipping automatic seeding until database connection is verified.');
+    } else {
+      console.error("[Airport Seeder] Pre-check failed:", err.message);
+    }
   }
 }
 
+export const app = express();
+
 async function startServer() {
-  const app = express();
   const PORT = 3000;
+
+  // Enable HTTP response compression with smart filtering for pre-compressed formats
+  app.use(compression({
+    filter: (req, res) => {
+      if (req.headers['x-no-compression']) return false;
+      const contentType = res.getHeader('Content-Type');
+      if (typeof contentType === 'string') {
+        if (
+          contentType.includes('image/') ||
+          contentType.includes('pdf') ||
+          contentType.includes('zip') ||
+          contentType.includes('gzip') ||
+          contentType.includes('audio/') ||
+          contentType.includes('video/')
+        ) {
+          return false;
+        }
+      }
+      return compression.filter(req, res);
+    }
+  }));
+
+  // Enable trust proxy for Cloud Run and reverse proxies (enables express-rate-limit to read X-Forwarded-For securely)
+  app.set('trust proxy', 1);
+
+  // Mount Security Headers & Request Audit Logging
+  app.use(securityHeaders);
+  app.use(additionalPermissionsPolicy);
+  app.use(requestLogger);
 
   // Custom CORS details to support external client static site hosting
   app.use((req, res, next) => {
@@ -615,6 +763,9 @@ async function startServer() {
     }
     next();
   });
+
+  // Apply API rate limiting
+  app.use('/api', apiLimiter);
 
   app.use(express.json({ limit: '50mb' }));
 
@@ -1868,8 +2019,17 @@ async function logSentEmail({
   });
 
   app.use('/api/auth', authRoutes);
-  app.use('/uploads', express.static(path.join(process.cwd(), 'public', 'uploads')));
+  app.use('/uploads', express.static(path.join(process.cwd(), 'public', 'uploads'), {
+    maxAge: '7d',
+    etag: true,
+    setHeaders: (res) => {
+      res.setHeader('Cache-Control', 'public, max-age=604800, must-revalidate');
+    }
+  }));
   app.use('/api', apiRoutes);
+
+  // Mount global Express error handler
+  app.use(globalErrorHandler);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
@@ -1880,26 +2040,51 @@ async function logSentEmail({
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, {
+      etag: true,
+      setHeaders: (res, filePath) => {
+        if (filePath.includes('/assets/') || filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.woff2')) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+          res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+        }
+      }
+    }));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-    
-    // Auto-seed airports if database is currently empty
-    seedAirportsIfEmpty();
+  if (process.env.VERCEL || process.env.VERCEL_ENV) {
+    console.log("[Vercel] Serverless environment detected. Skipping app.listen() port binding.");
+    setImmediate(() => {
+      seedAirportsIfEmpty();
+    });
+  } else {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+      
+      // Non-blocking deferred background initialization to accelerate server startup time
+      setImmediate(() => {
+        // Auto-seed airports if database is currently empty
+        seedAirportsIfEmpty();
 
-    // Start the upcoming flight alerts scheduler
-    checkAndAlertUpcomingBookings();
-    setInterval(checkAndAlertUpcomingBookings, 5 * 60 * 1000); // Check every 5 minutes
+        // Start the upcoming flight alerts scheduler
+        checkAndAlertUpcomingBookings();
+        setInterval(checkAndAlertUpcomingBookings, 5 * 60 * 1000); // Check every 5 minutes
 
-    // Start the auto-complete bookings scheduler
-    autoCompletePassedBookings();
-    setInterval(autoCompletePassedBookings, 5 * 60 * 1000); // Check every 5 minutes
-  });
+        // Start the auto-complete bookings scheduler
+        autoCompletePassedBookings();
+        setInterval(autoCompletePassedBookings, 5 * 60 * 1000); // Check every 5 minutes
+
+        // Start the birthday greetings scheduler
+        checkAndSendBirthdayGreetings();
+        setInterval(checkAndSendBirthdayGreetings, 60 * 60 * 1000); // Check every hour
+      });
+    });
+  }
 }
 
 startServer();
+
+export default app;

@@ -35,19 +35,20 @@ import {
   AlertDialogHeader, 
   AlertDialogTitle 
 } from '@/components/ui/alert-dialog';
-import { Plane, Trash2, Plus, UserPlus, Clipboard, CreditCard, DollarSign, Contact, ListChecks, Mail, FileText, ChevronRight, AlertCircle, Info, Calendar, Shield, Save, Lock, Search, Download, Check, CheckCircle2, Clock } from 'lucide-react';
+import { Plane, Trash2, Plus, UserPlus, Clipboard, CreditCard, DollarSign, Contact, ListChecks, Mail, FileText, ChevronRight, AlertCircle, Info, Calendar, Shield, Save, Lock, Search, Download, Check, CheckCircle2, Clock, Printer } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getCardBrand } from '@/lib/payment-utils';
 import { getCardBrandIcon } from '@/lib/payment-icons';
 import { toast } from 'sonner';
 import { generateAuthEmail, generateCancelEmail, generateChangesEmail, generateRefundEmail } from '@/lib/emailTemplates';
-import { generateBookingConfirmation, generateBookingReport } from '@/lib/pdfGenerator';
+import { generateBookingConfirmation, generateBookingReport, generatePrintSummary } from '@/lib/pdfGenerator';
 
 
 // We removed static airport data as per user instructions
 // using Google Flights API dynamically via server side
 
 const highlightMatch = (text: string, search: string) => {
+  if (!text) return <span></span>;
   if (!search) return <span>{text}</span>;
   const parts = text.split(new RegExp(`(${search.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi'));
   return (
@@ -56,7 +57,7 @@ const highlightMatch = (text: string, search: string) => {
         part.toLowerCase() === search.toLowerCase() ? (
           <mark key={i} className="bg-yellow-100 dark:bg-yellow-950/70 text-blue-600 dark:text-blue-400 font-bold rounded-sm px-0.5">{part}</mark>
         ) : (
-          part
+          <React.Fragment key={i}>{part}</React.Fragment>
         )
       )}
     </span>
@@ -459,7 +460,11 @@ export default function CreateBooking({ profile }: { profile: any }) {
         setRemarks(d.remarks || '');
         setBookingStatus(d.status || 'draft');
         setEmailTemplateType(d.emailTemplateType || 'auth');
-      }).catch(console.error).finally(() => setLoading(false));
+      }).catch(err => {
+        console.error(err);
+        toast.error('Booking not found or access denied');
+        navigate('/');
+      }).finally(() => setLoading(false));
     }
   }, [id]);
 
@@ -691,6 +696,54 @@ export default function CreateBooking({ profile }: { profile: any }) {
     }
   };
 
+  const handlePrintBookingSummary = () => {
+    try {
+      const branding = settings ? {
+        organizationName: settings.organizationName,
+        supportPhone: settings.supportPhone,
+        supportEmail: settings.supportEmail,
+        logoUrl: settings.logoUrl,
+        fullAddress: settings.fullAddress,
+        primaryColor: settings.primaryColor
+      } : undefined;
+
+      const bookingObj = {
+        crmId: crmId || id || 'Draft',
+        airlineName: airlineName || 'Unknown Airline',
+        pnr: pnr || '---',
+        origin: origin || '---',
+        destination: destination || '---',
+        tripType: tripType || 'One-Way',
+        departureDate: departureDate || '---',
+        arrivalDate: arrivalDate || '---',
+        cabinClass: cabinClass || 'Economy',
+        currency: pricing.currency || 'USD',
+        airlineCharges: pricing.airline || 0,
+        serviceFee: pricing.service || 0,
+        totalAmount: pricing.total || 0,
+        status: bookingStatus || 'pending',
+        signatureData: signatureData,
+        cardHolder: payment.ccName || passengers[0]?.name || passengers[0] || contact.email || 'Valued Customer',
+        contactEmail: contact.email,
+        contactPhone: contact.phone,
+        remarks: remarks || '',
+        validatedGateway: validatedGateway || 'SECURED SYSTEM',
+        cardBrand: getCardBrand(payment.ccNumber) || 'CARD',
+        cardNumberMasked: payment.ccNumber ? payment.ccNumber.slice(-4) : '',
+        multiCitySegments: multiCitySegments || [],
+        refundQuote: pricing.refundQuote || 0,
+        refundType: pricing.refundType || 'original',
+        airlineCredits: pricing.airlineCredits || 0,
+      };
+
+      generatePrintSummary(bookingObj, passengers, branding);
+      toast.success('Printer-friendly summary PDF downloaded successfully');
+    } catch (err) {
+      console.error("Print summary generation failed:", err);
+      toast.error('Failed to generate print summary PDF');
+    }
+  };
+
   const handleDownloadAuthVerification = async () => {
     if (!id) return;
     try {
@@ -835,7 +888,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
 
       if (canEditSensitive || addingNewCard) {
         const detectedB = detectBrand(payment.ccNumber);
-        const expParts = payment.expiry ? payment.expiry.split('/') : ['', ''];
+        const expParts = (payment?.expiry && typeof payment.expiry === 'string') ? payment.expiry.split('/') : ['', ''];
         const cardLast4 = payment.ccNumber ? payment.ccNumber.replace(/\D/g, '').slice(-4) : (existingSnap?.data?.cardLast4 || existingSnap?.data?.card_last_4 || '');
 
         dataToSave.cardHolder = (payment.ccName || passengers[0]?.name || passengers[0] || '').toUpperCase();
@@ -942,7 +995,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
           el.style.height = originalStyle.height; el.style.maxHeight = originalStyle.maxHeight; el.style.overflow = originalStyle.overflow;
           if (scrollContainer && scrollStyle) { (scrollContainer as any).style.overflow = scrollStyle.overflow; (scrollContainer as any).style.height = scrollStyle.height; (scrollContainer as any).style.maxHeight = scrollStyle.maxHeight; }
 
-          snapshotBase64 = dataUrl.split(',')[1];
+          snapshotBase64 = (dataUrl && typeof dataUrl === 'string') ? dataUrl.split(',')[1] : '';
           const pdf = new jsPDF('p', 'mm', 'a4');
           const imgProps = pdf.getImageProperties(dataUrl);
           const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -951,7 +1004,8 @@ export default function CreateBooking({ profile }: { profile: any }) {
           let heightLeft = pdfHeight; let position = 0;
           pdf.addImage(dataUrl, 'JPEG', 0, position, pdfWidth, pdfHeight); heightLeft -= pageHeight;
           while (heightLeft > 0) { position -= pageHeight; pdf.addPage(); pdf.addImage(dataUrl, 'JPEG', 0, position, pdfWidth, pdfHeight); heightLeft -= pageHeight; }
-          pdfBase64 = pdf.output('datauristring').split(',')[1];
+          const pdfUri = pdf.output('datauristring');
+          pdfBase64 = (pdfUri && typeof pdfUri === 'string') ? pdfUri.split(',')[1] : '';
         } catch (pdfErr) {}
       }
 
@@ -1156,6 +1210,15 @@ export default function CreateBooking({ profile }: { profile: any }) {
                 disabled={loading}
               >
                 <Download className="w-4 h-4 mr-2" /> Export PDF Report
+              </Button>
+
+              <Button 
+                variant="outline" 
+                className="px-4 py-1.5 border border-slate-300 dark:border-slate-700 text-sm font-medium rounded text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 h-9 transition-all active:scale-95" 
+                onClick={handlePrintBookingSummary} 
+                disabled={loading}
+              >
+                <Printer className="w-4 h-4 mr-2" /> Print Summary
               </Button>
               
               {['Admin', 'Superadmin', 'HOD'].includes(profile?.role) && (
@@ -1408,7 +1471,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
                 
                 <div className="space-y-6 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                   {passengers.map((p, i) => (
-                    <div key={p.id} className="p-6 bg-slate-50/50 dark:bg-slate-800/30 rounded-2xl border border-slate-100 dark:border-slate-800 relative group animate-in zoom-in-95 duration-200">
+                    <div key={p.id || i} className="p-6 bg-slate-50/50 dark:bg-slate-800/30 rounded-2xl border border-slate-100 dark:border-slate-800 relative group animate-in zoom-in-95 duration-200">
                       <div className="flex items-center justify-between mb-4">
                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Passenger #{i + 1}</span>
                         {(passengers.length > 1 && canEditSensitive) && (
@@ -1529,7 +1592,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
                     </thead>
                     <tbody>
                       {passengers.map((p, i) => (
-                        <tr key={p.id} className="border-t border-slate-50 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                        <tr key={p.id || i} className="border-t border-slate-50 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
                           <td className="p-4 text-xs text-slate-400 dark:text-slate-500 font-mono italic">{i + 1}</td>
                           <td className="p-4 text-xs font-bold text-slate-800 dark:text-slate-100 tracking-tight uppercase">
                             <span className="flex items-center gap-1.5 flex-wrap">
@@ -1723,7 +1786,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
                     <div className="space-y-4 pt-2">
                        <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 block">Flight Segments</label>
                        {multiCitySegments.map((segment, index) => (
-                         <div key={segment.id} className="flex gap-4 items-center">
+                         <div key={segment.id || index} className="flex gap-4 items-center">
                            <div className="flex-1">
                              <input 
                                type="date" 
@@ -2372,7 +2435,7 @@ export default function CreateBooking({ profile }: { profile: any }) {
                             <div className="space-y-4">
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 block">Remark History</label>
                                 <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 max-h-[400px] overflow-y-auto space-y-4">
-                                    {remarks.split('\n\n').reverse().map((r, idx) => (
+                                    {(remarks || '').split('\n\n').reverse().map((r, idx) => (
                                        <div key={idx} className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-50 dark:border-slate-700 relative group">
                                            <div className="absolute top-4 left-0 w-1 h-3 bg-emerald-500 rounded-r-full"></div>
                                            <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400 whitespace-pre-wrap block leading-relaxed">{r}</span>
@@ -2443,6 +2506,15 @@ export default function CreateBooking({ profile }: { profile: any }) {
               title="Generate a structured transactional PDF report"
             >
               <FileText className="w-3 h-3 mr-2" /> Report PDF
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handlePrintBookingSummary}
+              className="h-8 px-3 ml-2 text-[10px] font-black uppercase tracking-widest bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-800 text-white dark:text-slate-100 border-0 shadow-sm"
+              title="Generate a clean, printer-friendly travel summary PDF"
+            >
+              <Printer className="w-3 h-3 mr-2" /> Print Summary
             </Button>
           </div>
 

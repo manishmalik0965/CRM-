@@ -56,7 +56,7 @@ export interface EmailData {
   cardBrand?: string;
 }
 
-export type EmailTemplateType = 'auth' | 'confirmation' | 'refund' | 'cancel' | 'changes';
+export type EmailTemplateType = 'auth' | 'confirmation' | 'refund' | 'cancel' | 'changes' | 'birthday';
 
 export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) => {
   const { branding } = data;
@@ -77,6 +77,7 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
     refund: { primary: '#e11d48', secondary: '#be123c', bgTitle: '#e11d48', textTitle: 'Refund Authorization Required' },
     cancel: { primary: '#ea580c', secondary: '#c2410c', bgTitle: '#ea580c', textTitle: 'Cancellation & Rebook Required' },
     changes: { primary: '#0284c7', secondary: '#0369a1', bgTitle: '#0284c7', textTitle: 'Changes Authorization Required' },
+    birthday: { primary: '#f43f5e', secondary: '#be123c', bgTitle: '#f43f5e', textTitle: 'Happy Birthday from SkyWay!' },
   };
   const theme = colors[type] || colors.auth;
 
@@ -89,7 +90,8 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
     confirmation: 'ReservationConfirmed',
     refund: 'ReservationCancelled',
     cancel: 'ReservationCancelled',
-    changes: 'ReservationPending'
+    changes: 'ReservationPending',
+    birthday: 'ReservationConfirmed'
   };
 
   const jsonLd = `
@@ -251,6 +253,35 @@ export const generateEmailTemplate = (type: EmailTemplateType, data: EmailData) 
      `;
   } else if (type === 'changes') {
     systemIntro = `${greeting}We have successfully processed the requested changes to your booking (${pnrHtml})${gatewayHtml}. Your updated itinerary details are enclosed. Please provide your authorization below to confirm the modifications and any associated fare adjustments.${getSignatureText('booking modifications and fare difference')}${footerText}`;
+  } else if (type === 'birthday') {
+    systemIntro = `
+      <div style="text-align: center; padding: 20px 0;">
+        <h1 style="color: ${theme.primary}; font-size: 32px; margin-bottom: 10px;">Happy Birthday, ${data.passengerName}! 🎂</h1>
+        <p style="font-size: 18px; color: #475569; line-height: 1.6;">
+          Warmest wishes on your special day from all of us at <strong>${orgName}</strong>!
+        </p>
+      </div>
+      <div style="background-color: #fff1f2; border-radius: 16px; padding: 25px; border: 1px solid #fecdd3; margin: 20px 0;">
+        <p style="font-size: 16px; color: #881337; line-height: 1.6; margin: 0;">
+          May your year ahead be filled with incredible adventures and unforgettable journeys. As you celebrate another wonderful year, we'd like to remind you that we're always here to help you plan your next dream getaway.
+        </p>
+      </div>
+      <div style="margin-top: 30px;">
+        <p style="font-size: 15px; color: #64748b; line-height: 1.7;">
+          Whether it's a relaxing beach escape, a thrilling city tour, or a cozy mountain retreat, our team is dedicated to making your travel dreams a reality with:
+        </p>
+        <ul style="color: #475569; font-size: 15px; line-height: 2; margin-top: 15px;">
+          <li>✨ Personalized itinerary planning</li>
+          <li>🏨 Exclusive hotel and resort deals</li>
+          <li>✈️ Seamless flight booking and management</li>
+          <li>🤝 24/7 dedicated travel support</li>
+        </ul>
+      </div>
+      <div style="text-align: center; margin-top: 40px; border-top: 1px solid #f1f5f9; padding-top: 30px;">
+        <p style="font-size: 16px; color: #0f172a; font-weight: 600;">Ready to start your next chapter with a new adventure?</p>
+        <a href="${data.appUrl || 'https://skywaytravel.com'}" style="display: inline-block; background-color: ${theme.primary}; color: white; padding: 14px 28px; text-decoration: none; border-radius: 10px; font-weight: 700; margin-top: 15px; box-shadow: 0 4px 12px rgba(244, 63, 94, 0.3);">Explore Our Latest Deals</a>
+      </div>
+    `;
   }
 
   let introTextHtml = `

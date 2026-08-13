@@ -23,7 +23,10 @@ import {
   Building,
   Download,
   LayoutDashboard,
-  Keyboard
+  Keyboard,
+  RefreshCw,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,7 +35,8 @@ const Icon = ({ name, ...props }: { name: string, [key: string]: any }) => {
   const icons: Record<string, any> = {
     LogOut, Search, Bell, Moon, Sun, Plane, Menu, X, Check, CheckCircle2,
     PlusCircle, FileEdit, Calendar, Mail, Users, BarChart3, Activity,
-    Settings: SettingsIcon, Database, Building, Download, LayoutDashboard, Keyboard
+    Settings: SettingsIcon, Database, Building, Download, LayoutDashboard, Keyboard,
+    RefreshCw, Wifi, WifiOff
   };
   const LucideIcon = icons[name];
   return LucideIcon ? <LucideIcon {...props} /> : null;
@@ -48,22 +52,22 @@ import { useAuth } from '@/context/AuthContext';
 import { api } from '@/lib/api';
 
 // Pages
-import Dashboard from './pages/Dashboard';
 import LoginPage from './pages/LoginPage';
-import CreateBooking from './pages/CreateBooking';
-import AllBookings from './pages/AllBookings';
-import AuthorizationPage from './pages/AuthorizationPage';
-import ActivityLogs from './pages/ActivityLogs';
-import Settings from './pages/Settings';
-import EmailTemplatesPage from './pages/EmailTemplatesPage';
-import UsersPage from './pages/UsersPage';
-import ClientsPage from './pages/ClientsPage';
-import ProfilePage from './pages/ProfilePage';
-import CalendarView from './pages/CalendarView';
-import ClientAdminPage from './pages/ClientAdminPage';
-import SentEmailsInbox from './pages/SentEmailsInbox';
+const Dashboard = React.lazy(() => import('./pages/Dashboard'));
+const CreateBooking = React.lazy(() => import('./pages/CreateBooking'));
+const AllBookings = React.lazy(() => import('./pages/AllBookings'));
+const AuthorizationPage = React.lazy(() => import('./pages/AuthorizationPage'));
+const ActivityLogs = React.lazy(() => import('./pages/ActivityLogs'));
+const Settings = React.lazy(() => import('./pages/Settings'));
+const EmailTemplatesPage = React.lazy(() => import('./pages/EmailTemplatesPage'));
+const UsersPage = React.lazy(() => import('./pages/UsersPage'));
+const ClientsPage = React.lazy(() => import('./pages/ClientsPage'));
+const ProfilePage = React.lazy(() => import('./pages/ProfilePage'));
+const CalendarView = React.lazy(() => import('./pages/CalendarView'));
+const ClientAdminPage = React.lazy(() => import('./pages/ClientAdminPage'));
+const SentEmailsInbox = React.lazy(() => import('./pages/SentEmailsInbox'));
 
-import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { SafeFallback } from '@/components/SafeFallback';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
 
@@ -230,12 +234,15 @@ function App() {
   const [showInstallBtn, setShowInstallBtn] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
+      setIsSyncing(true);
       toast.success("Connection restored! Syncing CRM data with servers...", {
-        duration: 4000
+        duration: 4000,
+        icon: <RefreshCw className="w-4 h-4 text-emerald-500 animate-spin" />
       });
       
       // Trigger background sync if supported
@@ -251,6 +258,10 @@ function App() {
 
       // Fire a custom event to notify all active pages to refetch details
       window.dispatchEvent(new CustomEvent('crm-sync-refresh'));
+      
+      setTimeout(() => {
+        setIsSyncing(false);
+      }, 4000);
     };
 
     const handleOffline = () => {
@@ -260,12 +271,31 @@ function App() {
       });
     };
 
+    const handleCrmSyncRefresh = () => {
+      setIsSyncing(true);
+      setTimeout(() => setIsSyncing(false), 2500);
+    };
+
+    const handleCrmSyncStart = () => {
+      setIsSyncing(true);
+    };
+
+    const handleCrmSyncEnd = () => {
+      setIsSyncing(false);
+    };
+
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('crm-sync-refresh', handleCrmSyncRefresh);
+    window.addEventListener('crm-sync-start', handleCrmSyncStart);
+    window.addEventListener('crm-sync-end', handleCrmSyncEnd);
 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('crm-sync-refresh', handleCrmSyncRefresh);
+      window.removeEventListener('crm-sync-start', handleCrmSyncStart);
+      window.removeEventListener('crm-sync-end', handleCrmSyncEnd);
     };
   }, []);
 
@@ -368,6 +398,7 @@ function App() {
       }
       
       const fetchData = async () => {
+        setIsSyncing(true);
         try {
           const settingsRes = await api.get('/settings');
           setSettings(settingsRes.data);
@@ -381,25 +412,31 @@ function App() {
         }
         
         setLoading(false);
+        setTimeout(() => setIsSyncing(false), 1500);
       };
       
       fetchData();
 
       const handleSettingsUpdate = async () => {
+        setIsSyncing(true);
         try {
           const settingsRes = await api.get('/settings');
           setSettings(settingsRes.data);
         } catch (e) {}
+        setTimeout(() => setIsSyncing(false), 1000);
       };
       window.addEventListener('settingsUpdated', handleSettingsUpdate);
       
       // Basic polling for notifications
       const notifInterval = setInterval(async () => {
+         setIsSyncing(true);
          try {
            const res = await api.get('/bookings/recent-updates');
            setNotifications(Array.isArray(res.data) ? res.data : []);
          } catch(e) {
            setNotifications([]);
+         } finally {
+           setTimeout(() => setIsSyncing(false), 1500);
          }
       }, 60000);
       
@@ -718,6 +755,20 @@ function App() {
                 <h1 className="text-slate-900 dark:text-white font-black tracking-tight text-sm sm:text-base uppercase max-w-[120px] sm:max-w-[200px] truncate">{settings?.organizationName || 'BLACKGRASS CRM'}</h1>
               </Link>
               <div className="flex items-center gap-1 sm:gap-2">
+                {/* Mobile Syncing Indicator */}
+                <div className="flex items-center shrink-0 mr-1">
+                  {isSyncing ? (
+                    <div className="p-1.5 text-blue-500 bg-blue-50 dark:bg-blue-950/40 rounded-full border border-blue-100 dark:border-blue-900/40" title="Sync active...">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    </div>
+                  ) : !isOnline ? (
+                    <div className="p-1.5 text-red-500 bg-red-50 dark:bg-red-950/40 rounded-full border border-red-100 dark:border-red-900/40 animate-pulse" title="Offline mode">
+                      <WifiOff className="w-3.5 h-3.5" />
+                    </div>
+                  ) : (
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="Connected & Online"></div>
+                  )}
+                </div>
                 <button className="text-slate-400 hover:text-slate-600 dark:hover:text-white p-1 transition-colors" onClick={() => setDarkMode(!darkMode)} title="Toggle Theme">
                   {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
                 </button>
@@ -906,6 +957,26 @@ function App() {
                   )}
                 </div>
                 <div className="flex items-center gap-6">
+                  {/* Background sync/connection status indicator */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {isSyncing ? (
+                      <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 text-[10px] font-bold px-2.5 py-1 rounded-full border border-blue-100 dark:border-blue-900/40 shadow-sm transition-all duration-300">
+                        <RefreshCw className="w-3 h-3 animate-spin text-blue-500" />
+                        <span className="uppercase tracking-wider">Sync Active</span>
+                      </div>
+                    ) : !isOnline ? (
+                      <div className="flex items-center gap-1.5 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 text-[10px] font-bold px-2.5 py-1 rounded-full border border-red-100 dark:border-red-900/40 shadow-sm transition-all duration-300 animate-pulse">
+                        <WifiOff className="w-3 h-3 text-red-500" />
+                        <span className="uppercase tracking-wider">Offline</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 text-[10px] font-bold px-2.5 py-1 rounded-full border border-slate-100 dark:border-slate-800/80 transition-all duration-300">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <span className="uppercase tracking-wider">Online</span>
+                      </div>
+                    )}
+                  </div>
+
                   <DropdownMenu>
                     <DropdownMenuTrigger className="outline-none">
                       <div className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity">
@@ -1060,29 +1131,36 @@ function App() {
                       </Button>
                    </div>
                 )}
-                <ErrorBoundary>
-                  <Routes>
-                    <Route path="/" element={<Dashboard />} />
-                    <Route path="/index.html" element={<Navigate to="/" replace />} />
-                    <Route path="/clients" element={isSystemAdmin ? <ClientsPage /> : <Navigate to="/" />} />
-                    <Route path="/bookings/new" element={<CreateBooking profile={profile} />} />
-                    <Route path="/bookings/edit/:id" element={<CreateBooking profile={profile} />} />
-                    <Route path="/bookings" element={<AllBookings filter="all" profile={profile} />} />
-                    <Route path="/calendar" element={<CalendarView />} />
-                    <Route path="/drafts" element={<AllBookings filter="draft" profile={profile} />} />
-                    <Route path="/authorized" element={<AllBookings filter="authorized" profile={profile} />} />
-                    <Route path="/users" element={isManager ? <UsersPage profile={profile} /> : <Navigate to="/" />} />
-                    <Route path="/analytics" element={<Dashboard />} />
-                    <Route path="/bookings/:id" element={<AllBookings filter="all" />} />
-                    <Route path="/logs" element={isAdmin ? <AdminRoute isAdmin={isAdmin}><ActivityLogs /></AdminRoute> : <Navigate to="/" />} />
-                    <Route path="/templates" element={isAdmin ? <AdminRoute isAdmin={isAdmin}><EmailTemplatesPage /></AdminRoute> : <Navigate to="/" />} />
-                    <Route path="/settings" element={<AdminRoute isAdmin={isSystemAdmin || profile?.role === 'Admin'}><Settings profile={profile} /></AdminRoute>} />
-                    <Route path="/client-portal" element={profile?.role === 'Admin' ? <ClientAdminPage /> : <Navigate to="/" />} />
-                    <Route path="/sent-emails" element={<SentEmailsInbox />} />
-                    <Route path="/profile" element={<ProfilePage profile={profile} />} />
-                    <Route path="*" element={<Navigate to="/" />} />
-                  </Routes>
-                </ErrorBoundary>
+                <SafeFallback>
+                  <React.Suspense fallback={
+                    <div className="flex flex-col items-center justify-center min-h-[50vh] gap-3">
+                      <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Loading Module...</span>
+                    </div>
+                  }>
+                    <Routes>
+                      <Route path="/" element={<Dashboard />} />
+                      <Route path="/index.html" element={<Navigate to="/" replace />} />
+                      <Route path="/clients" element={isSystemAdmin ? <ClientsPage /> : <Navigate to="/" />} />
+                      <Route path="/bookings/new" element={<CreateBooking profile={profile} />} />
+                      <Route path="/bookings/edit/:id" element={<CreateBooking profile={profile} />} />
+                      <Route path="/bookings" element={<AllBookings filter="all" profile={profile} />} />
+                      <Route path="/calendar" element={<CalendarView />} />
+                      <Route path="/drafts" element={<AllBookings filter="draft" profile={profile} />} />
+                      <Route path="/authorized" element={<AllBookings filter="authorized" profile={profile} />} />
+                      <Route path="/users" element={isManager ? <UsersPage profile={profile} /> : <Navigate to="/" />} />
+                      <Route path="/analytics" element={<Dashboard />} />
+                      <Route path="/bookings/:id" element={<AllBookings filter="all" />} />
+                      <Route path="/logs" element={isAdmin ? <AdminRoute isAdmin={isAdmin}><ActivityLogs /></AdminRoute> : <Navigate to="/" />} />
+                      <Route path="/templates" element={isAdmin ? <AdminRoute isAdmin={isAdmin}><EmailTemplatesPage /></AdminRoute> : <Navigate to="/" />} />
+                      <Route path="/settings" element={<AdminRoute isAdmin={isSystemAdmin || profile?.role === 'Admin'}><Settings profile={profile} /></AdminRoute>} />
+                      <Route path="/client-portal" element={profile?.role === 'Admin' ? <ClientAdminPage /> : <Navigate to="/" />} />
+                      <Route path="/sent-emails" element={<SentEmailsInbox />} />
+                      <Route path="/profile" element={<ProfilePage profile={profile} />} />
+                      <Route path="*" element={<Navigate to="/" />} />
+                    </Routes>
+                  </React.Suspense>
+                </SafeFallback>
               </div>
               
               {showShortcutsHelp && (

@@ -14,8 +14,8 @@ export const logToServer = async (payload: {
   error?: any;
 }) => {
   if (isLogging) return;
-  // If we are logging a failed /logs request, avoid infinite recursion
-  if (payload.url && payload.url.includes('/logs')) return;
+  // If we are logging a failed /logs or /client-error request, avoid infinite recursion
+  if (payload.url && (payload.url.includes('/logs') || payload.url.includes('/client-error'))) return;
   
   isLogging = true;
   try {
@@ -32,7 +32,7 @@ export const logToServer = async (payload: {
     }
 
     // Use standard window.fetch to avoid interceptor recursion entirely
-    await fetch('/api/logs', {
+    await fetch('/api/audit-logs/client-error', {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -41,7 +41,7 @@ export const logToServer = async (payload: {
       }),
     });
   } catch (err) {
-    console.error('Failed to dispatch client log to /api/logs:', err);
+    console.error('Failed to dispatch client log to /api/audit-logs/client-error:', err);
   } finally {
     isLogging = false;
   }

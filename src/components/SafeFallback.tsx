@@ -13,7 +13,7 @@ interface State {
   errorInfo: ErrorInfo | null;
 }
 
-export class ErrorBoundary extends React.Component<Props, State> {
+export class SafeFallback extends React.Component<Props, State> {
   public state: State = {
     hasError: false,
     error: null,

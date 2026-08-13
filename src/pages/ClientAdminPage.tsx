@@ -290,6 +290,7 @@ export default function ClientAdminPage() {
 
   const triggerInstantCloudSync = async () => {
     setSyncing(true);
+    window.dispatchEvent(new CustomEvent('crm-sync-start'));
     try {
       const res = await api.post('/client-admin/trigger-sync');
       toast.success(res.data?.message || 'Database cloud backup synchronization triggered and completed.');
@@ -298,6 +299,7 @@ export default function ClientAdminPage() {
       toast.error('Sync failed: ' + (err.response?.data?.error || err.message));
     } finally {
       setSyncing(false);
+      window.dispatchEvent(new CustomEvent('crm-sync-end'));
     }
   };
 

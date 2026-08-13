@@ -25,6 +25,7 @@ export default function LoginPage() {
 
   // Brand States
   const [branding, setBranding] = useState({
+    tenantId: '',
     organizationName: 'CRM Portal',
     primaryColor: '#2563eb',
     logoUrl: ''
@@ -33,9 +34,10 @@ export default function LoginPage() {
   useEffect(() => {
     async function loadPublicBranding() {
       try {
-        const { data } = await api.get('/settings/public');
+        const { data } = await api.get('/public/settings');
         if (data) {
           setBranding({
+            tenantId: data.tenantId || '',
             organizationName: data.organizationName || 'CRM Portal',
             primaryColor: data.primaryColor || '#2563eb',
             logoUrl: data.logoUrl || ''
@@ -58,7 +60,11 @@ export default function LoginPage() {
 
     setLoading(true);
     try {
-      const res = await api.post('/auth/login', { email, password });
+      const res = await api.post('/auth/login', { 
+        email, 
+        password,
+        tenantId: branding.tenantId 
+      });
       
       if (res.data.requireMFA) {
         setMfaToken(res.data.mfaToken);

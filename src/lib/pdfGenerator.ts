@@ -1051,6 +1051,236 @@ export const generateBookingReport = (booking: any, passengers: any[], branding:
   doc.save(`Booking_Dossier_Report_${booking.crmId || 'PENDING'}.pdf`);
 };
 
+export const generatePrintSummary = (booking: any, passengers: any[], branding: BrandingSettings = defaultBranding) => {
+  const doc = new jsPDF() as any;
+  const pageWidth = doc.internal.pageSize.width;
+  const pageHeight = doc.internal.pageSize.height;
+  
+  // Printer-friendly pure white background
+  doc.setFillColor(255, 255, 255);
+  doc.rect(0, 0, pageWidth, pageHeight, 'F');
+
+  let currentY = 20;
+
+  // Header Area: High-Contrast Layout
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42); // slate-900
+  doc.setFontSize(16);
+  doc.text(branding.organizationName.toUpperCase(), 15, currentY);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105); // slate-600
+  doc.setFontSize(8.5);
+  doc.text(`Email: ${branding.supportEmail}  |  Phone: ${branding.supportPhone}`, 15, currentY + 5);
+  if (branding.fullAddress) {
+    doc.text(branding.fullAddress, 15, currentY + 9);
+  }
+
+  // Right Side: Reference ID & Carrier Info
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.setFontSize(11);
+  doc.text(`PNR LOCATOR: ${booking.pnr?.toUpperCase() || 'PENDING'}`, pageWidth - 15, currentY, { align: 'right' });
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.setFontSize(9);
+  doc.text(`CRM Reference: ${booking.crmId}`, pageWidth - 15, currentY + 5, { align: 'right' });
+  doc.text(`Date Printed: ${new Date().toLocaleDateString()}`, pageWidth - 15, currentY + 9, { align: 'right' });
+
+  // Thin separator line
+  doc.setDrawColor(226, 232, 240); // slate-200
+  doc.setLineWidth(0.5);
+  doc.line(15, currentY + 14, pageWidth - 15, currentY + 14);
+
+  currentY += 24;
+
+  // Title: "OFFICIAL TRAVEL SUMMARY & ITINERARY"
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.setFontSize(14);
+  doc.text('OFFICIAL TRAVEL SUMMARY & ITINERARY', 15, currentY);
+  currentY += 8;
+
+  // Section 1: Flight & Carrier Info
+  const itinerarySummary = booking.tripType === 'Multi-City' && booking.multiCitySegments && booking.multiCitySegments.length > 0
+    ? booking.multiCitySegments.map((seg: any, idx: number) => `Segment ${idx + 1}: ${seg.origin || 'TBD'} to ${seg.destination || 'TBD'} (${seg.departureDate || 'TBD'})`).join('\n')
+    : `Route: ${booking.origin || 'TBD'} to ${booking.destination || 'TBD'}`;
+
+  const flightHeaders = [['Booking Information', 'Details / System Data']];
+  const flightRows = [
+    ['Airline Carrier Name', booking.airlineName?.toUpperCase() || 'UNSPECIFIED'],
+    ['Booking Status', (booking.status || 'DRAFT').toUpperCase()],
+    ['Journey Class / Cabin', booking.cabinClass?.toUpperCase() || 'ECONOMY'],
+    ['Trip Category Type', booking.tripType?.toUpperCase() || 'ONE-WAY'],
+    ['Detailed Itinerary Routing', itinerarySummary],
+    ['Scheduled Departure Date', booking.departureDate || 'N/A'],
+    ['Scheduled Arrival / Return Date', booking.arrivalDate || 'N/A'],
+  ];
+
+  autoTable(doc, {
+    startY: currentY,
+    margin: { left: 15, right: 15 },
+    theme: 'grid',
+    head: flightHeaders,
+    body: flightRows,
+    headStyles: { fillColor: [30, 41, 59], fontSize: 9, fontStyle: 'bold' },
+    styles: { fontSize: 8.5, cellPadding: 3, textColor: [15, 23, 42] },
+    columnStyles: {
+      0: { fontStyle: 'bold', cellWidth: 50, fillColor: [248, 250, 252] },
+      1: { cellWidth: 130 }
+    }
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 10;
+
+  // Section 2: Passenger Manifest
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text('PASSENGER EMBARKATION DIRECTORY', 15, currentY);
+  currentY += 4;
+
+  const paxHeaders = [['#', 'Passenger Name', 'Date of Birth', 'Gender', 'Passenger Type Code', 'Ticket Number']];
+  const paxRows = passengers.map((p, idx) => [
+    idx + 1,
+    (p.name || '---').toUpperCase(),
+    p.dob || '---',
+    p.gender || '---',
+    p.ptc || 'ADT',
+    p.ticketNumber || 'TBD'
+  ]);
+
+  autoTable(doc, {
+    startY: currentY,
+    margin: { left: 15, right: 15 },
+    theme: 'grid',
+    head: paxHeaders,
+    body: paxRows,
+    headStyles: { fillColor: [51, 65, 85], fontSize: 8.5, fontStyle: 'bold' },
+    styles: { fontSize: 8, cellPadding: 3, textColor: [15, 23, 42] },
+    columnStyles: {
+      0: { cellWidth: 10, halign: 'center' },
+      1: { fontStyle: 'bold', cellWidth: 60 }
+    }
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 10;
+
+  // Section 3: Billing & Financial Summary (Checks for page overflow)
+  if (currentY + 60 > pageHeight - 15) {
+    doc.addPage();
+    currentY = 20;
+  }
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text('FINANCIAL STATEMENT & CARD CAPTURE', 15, currentY);
+  currentY += 4;
+
+  const refundDetails = booking.refundQuote && booking.refundQuote > 0 
+    ? `\nRefund Credit Authorized: ${booking.currency} ${booking.refundQuote.toLocaleString()} (${booking.refundType || 'original'})`
+    : '';
+  const creditDetails = booking.airlineCredits && booking.airlineCredits > 0
+    ? `\nAirline Credits Applied: ${booking.currency} ${booking.airlineCredits.toLocaleString()}`
+    : '';
+
+  const billingHeaders = [['Fare Breakdown', 'Payment Details & Secured Profile']];
+  const billingRows = [
+    [
+      `Base Airline Charges: ${booking.currency} ${booking.airlineCharges?.toLocaleString() || '0.00'}\nSecured Service & Taxes: ${booking.currency} ${booking.serviceFee?.toLocaleString() || '0.00'}${refundDetails}${creditDetails}\n\nNet Total Authorized Amount:\n${booking.currency} ${booking.totalAmount?.toLocaleString() || '0.00'}`,
+      `Secured Cardholder Name: ${(booking.cardHolder || '---').toUpperCase()}\nsecured Form of Payment: ${booking.cardBrand?.toUpperCase() || 'CARD'} (ending in ${booking.cardNumberMasked || 'XXXX'})\nSecured Contact Email: ${booking.contactEmail || '---'}\nSecured Phone Details: ${booking.contactPhone || '---'}`
+    ]
+  ];
+
+  autoTable(doc, {
+    startY: currentY,
+    margin: { left: 15, right: 15 },
+    theme: 'grid',
+    head: billingHeaders,
+    body: billingRows,
+    headStyles: { fillColor: [51, 65, 85], fontSize: 8.5, fontStyle: 'bold' },
+    styles: { fontSize: 8, cellPadding: 4, textColor: [15, 23, 42] }
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 10;
+
+  // Section 4: Electronic Consent & Verification
+  if (currentY + 45 > pageHeight - 15) {
+    doc.addPage();
+    currentY = 20;
+  }
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text('TRANSACTION VALIDATION EVIDENCE', 15, currentY);
+  currentY += 4;
+
+  if (booking.signatureData) {
+    const authDate = booking.authorizedAt?.toDate?.() 
+      ? booking.authorizedAt.toDate().toLocaleString() 
+      : booking.authorizedAt || new Date().toLocaleString();
+    const ipAddress = booking.authIp || '127.0.0.1';
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.text('Secure Digital Authorization Signature Verified:', 15, currentY + 5);
+
+    try {
+      doc.addImage(booking.signatureData, 'PNG', 15, currentY + 8, 45, 12);
+    } catch (e) {}
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.text(`Signee Identity: ${getCardHolderOrPax(booking, passengers)}`, 68, currentY + 11);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Recorded IP Address: ${ipAddress}`, 68, currentY + 15);
+    doc.text(`Secured Timestamp: ${authDate}`, 68, currentY + 19);
+
+    currentY += 26;
+  } else {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(8.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('[ Secure Electronic Signature: NOT COMPLETED / PENDING AUTHENTICATION ]', 15, currentY + 5);
+    currentY += 10;
+  }
+
+  // Section 5: Internal Remarks / Notes
+  if (booking.remarks) {
+    if (currentY + 25 > pageHeight - 15) {
+      doc.addPage();
+      currentY = 20;
+    }
+    
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(15, 23, 42);
+    doc.text('AGENT REMARKS & REQUISITION LOGS', 15, currentY + 2);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(51, 65, 85);
+    
+    const splitRemarks = doc.splitTextToSize(booking.remarks, pageWidth - 30);
+    doc.text(splitRemarks, 15, currentY + 7);
+  }
+
+  // Footer: Simple Page Numbering & Security Disclaimer
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7.5);
+    doc.setTextColor(148, 163, 184);
+    doc.line(15, pageHeight - 15, pageWidth - 15, pageHeight - 15);
+    doc.text('SkyWay CRM System • High-Security Travel Summarization Report', 15, pageHeight - 10);
+    doc.text(`Page ${i} of ${pageCount}`, pageWidth - 15, pageHeight - 10, { align: 'right' });
+  }
+
+  doc.save(`Travel_Summary_${booking.crmId || 'PENDING'}.pdf`);
+};
+
 // Helper for hex colors
 function hexToRgb(hex: string): [number, number, number] {
   let r = 0, g = 0, b = 0;

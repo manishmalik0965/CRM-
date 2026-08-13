@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { Response } from 'express';
+import { decryptText } from './encryption';
 
 function htmlToPlainText(html: string): string {
   if (!html) return '';
@@ -339,7 +340,7 @@ export async function generateAuthVerificationPdf(
   doc.fillColor('#0f172a').fontSize(10).font('Helvetica-Bold').text('BILLING PROFILE & METHOD OF PAYMENT', 45, currentY);
   currentY += 15;
 
-  const rawNum = booking.card_number || booking.cardNumber || booking.ccNumber || '';
+  const rawNum = decryptText(booking.card_number || booking.cardNumber || booking.ccNumber || '');
   const cardLast4 = booking.card_last_4 || booking.cardLast4 || (rawNum ? rawNum.slice(-4) : 'XXXX');
   let detectedBrand = booking.card_brand || booking.cardBrand || '';
   if (!detectedBrand || detectedBrand === 'CARD' || detectedBrand === 'Card' || detectedBrand === 'Unknown') {

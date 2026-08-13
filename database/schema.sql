@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS companies (
 CREATE TABLE IF NOT EXISTS users (
     id CHAR(36) PRIMARY KEY,
     company_id CHAR(36) NOT NULL,
-    email VARCHAR(255) NOT NULL UNIQUE,
-    user_id VARCHAR(255) UNIQUE NULL,
+    email VARCHAR(255) NOT NULL,
+    user_id VARCHAR(255) NULL,
     password_hash VARCHAR(255) NOT NULL,
     role ENUM('Admin', 'Manager', 'Agent', 'HOD', 'WFM', 'Superadmin') NOT NULL DEFAULT 'Agent',
     display_name VARCHAR(255) NULL,
@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+    UNIQUE idx_tenant_email (company_id, email),
+    UNIQUE idx_tenant_username (company_id, user_id),
     INDEX idx_company_auth (company_id, email)
 );
 

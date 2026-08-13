@@ -37,7 +37,7 @@ api.interceptors.response.use(
     (response) => response,
     (error) => {
         const config = error.config;
-        if (config && typeof config.url === 'string' && !config.url.includes('/logs')) {
+        if (config && typeof config.url === 'string' && !config.url.includes('/logs') && !config.url.includes('/audit-logs')) {
             // Import dynamically or use dynamic dispatch to avoid circular dependency
             import('./logger').then(({ logToServer }) => {
                 logToServer({

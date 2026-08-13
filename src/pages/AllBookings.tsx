@@ -10,7 +10,8 @@ import {
   generateConsolidatedReport,
   generateDocuSignPdf,
   generateBookingReport,
-  generateAuthVerificationCertificate
+  generateAuthVerificationCertificate,
+  generatePrintSummary
 } from '@/lib/pdfGenerator';
 import { 
   Table, 
@@ -52,7 +53,8 @@ import {
   XCircle,
   CircleDashed,
   X,
-  RefreshCw
+  RefreshCw,
+  Printer
 } from 'lucide-react';
 import { 
   DropdownMenu,
@@ -233,7 +235,7 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
     }
   };
 
-  const handleDownloadPdf = async (booking: any, type: 'confirmation' | 'auth' | 'invoice' | 'docusign' | 'report' | 'auth_verification') => {
+  const handleDownloadPdf = async (booking: any, type: 'confirmation' | 'auth' | 'invoice' | 'docusign' | 'report' | 'auth_verification' | 'print') => {
     try {
       let passengers = [];
       if (Array.isArray(booking.passengerDetails)) {
@@ -266,6 +268,9 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
           break;
         case 'report':
           generateBookingReport(booking, passengers, branding);
+          break;
+        case 'print':
+          generatePrintSummary(booking, passengers, branding);
           break;
         case 'auth_verification':
           if (['Admin', 'Superadmin', 'HOD'].includes(profile?.role)) {
@@ -1329,6 +1334,16 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                                 <span className="text-[9px] text-slate-400 font-bold uppercase">All Data & Remarks</span>
                             </div>
                           </DropdownMenuItem>
+                          
+                          <DropdownMenuItem className="rounded-xl flex items-center gap-3 py-3 px-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" onClick={() => handleDownloadPdf(booking, 'print')}>
+                            <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300">
+                                <Printer className="w-4 h-4" />
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Print Travel Summary</span>
+                                <span className="text-[9px] text-slate-400 font-bold uppercase">Printer-Friendly PDF</span>
+                            </div>
+                          </DropdownMenuItem>
 
                           {['Admin', 'Superadmin', 'HOD'].includes(profile?.role) && (
                             <DropdownMenuItem 
@@ -1503,7 +1518,7 @@ export default function AllBookings({ filter = 'all', profile }: { filter?: 'all
                                 </div>
                                 <div className="text-center">
                                    <p className="text-[10px] font-bold text-slate-400 uppercase">Authorized On</p>
-                                   <p className="text-xs font-black text-slate-900">{booking.authorizedAt?.toDate?.() ? booking.authorizedAt.toDate().toLocaleString() : 'Recent'}</p>
+                                   <p className="text-xs font-black text-slate-900">{booking.authorizedAt ? (booking.authorizedAt.toDate ? booking.authorizedAt.toDate().toLocaleString() : new Date(booking.authorizedAt).toLocaleString()) : 'Recent'}</p>
                                  </div>
                              </div>
                           </PopoverContent>

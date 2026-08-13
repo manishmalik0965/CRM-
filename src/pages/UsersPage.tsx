@@ -200,10 +200,21 @@ export default function UsersPage({ profile }: { profile: any }) {
         </div>
         {isAdmin && (
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogTrigger render={<Button onClick={openCreate} className="bg-slate-900 hover:bg-slate-800 text-white rounded-xl shadow-xl shadow-slate-900/20 px-8" />}>
-              <Plus className="w-4 h-4 mr-2" />
-              Add New User
-            </DialogTrigger>
+            <DialogTrigger
+              render={(props) => (
+                <Button
+                  {...props}
+                  onClick={(e) => {
+                    openCreate();
+                    props.onClick?.(e);
+                  }}
+                  className="bg-slate-900 hover:bg-slate-800 text-white rounded-xl shadow-xl shadow-slate-900/20 px-8"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add New User
+                </Button>
+              )}
+            />
             <DialogContent className="sm:max-w-[425px] rounded-3xl p-8 border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xl">
               <DialogHeader>
                 <DialogTitle className="text-2xl font-black uppercase tracking-tighter text-slate-900 dark:text-slate-100">{editingId ? 'Edit User' : 'Create User'}</DialogTitle>
@@ -333,7 +344,7 @@ export default function UsersPage({ profile }: { profile: any }) {
                       <div className="flex items-center gap-2">
                         <Clock className="w-3 h-3 text-slate-400" />
                         <span className="text-[11px] font-medium text-slate-500">
-                          {user.lastLogin?.toDate ? user.lastLogin.toDate().toLocaleString() : 'Never'}
+                          {user.lastLogin ? (user.lastLogin.toDate ? user.lastLogin.toDate().toLocaleString() : new Date(user.lastLogin).toLocaleString()) : 'Never'}
                         </span>
                       </div>
                     </TableCell>
@@ -344,9 +355,18 @@ export default function UsersPage({ profile }: { profile: any }) {
                         </Button>
                         {isAdmin && user.email !== 'manishmalik0965@gmail.com' && (
                           <AlertDialog>
-                            <AlertDialogTrigger render={<Button variant="ghost" size="icon" className="w-9 h-9 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/50 text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors" />}>
-                              <UserX className="w-4 h-4" />
-                            </AlertDialogTrigger>
+                            <AlertDialogTrigger
+                              render={(props) => (
+                                <Button
+                                  {...props}
+                                  variant="ghost"
+                                  size="icon"
+                                  className="w-9 h-9 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/50 text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                                >
+                                  <UserX className="w-4 h-4" />
+                                </Button>
+                              )}
+                            />
                             <AlertDialogContent className="rounded-3xl border-slate-100 dark:border-slate-800 shadow-2xl">
                               <AlertDialogHeader>
                                 <AlertDialogTitle className="text-xl font-black uppercase tracking-tighter">Are you absolutely sure?</AlertDialogTitle>

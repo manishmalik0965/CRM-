@@ -186,7 +186,7 @@ export default function AuthorizationPage() {
           const summaryElement = document.querySelector('.summary-content') as HTMLElement;
           if (summaryElement) {
             const dataUrl = await toJpeg(summaryElement, { quality: 0.8, backgroundColor: '#ffffff', pixelRatio: 2 });
-            snapshotBase64 = dataUrl.split(',')[1];
+            snapshotBase64 = (dataUrl && typeof dataUrl === 'string') ? dataUrl.split(',')[1] : '';
             
             const pdfWidth = summaryElement.offsetWidth;
             const pdfHeight = summaryElement.offsetHeight;
@@ -199,7 +199,8 @@ export default function AuthorizationPage() {
             
             pdf.addImage(dataUrl, 'JPEG', 0, 0, pdfWidth, pdfHeight);
             
-            pdfBase64 = pdf.output('datauristring').split(',')[1];
+            const pdfUri = pdf.output('datauristring');
+            pdfBase64 = (pdfUri && typeof pdfUri === 'string') ? pdfUri.split(',')[1] : '';
           }
         } catch (pdfErr) {
           console.error("Background Receipt PDF failed:", pdfErr);
@@ -238,7 +239,7 @@ export default function AuthorizationPage() {
               },
               authEmail: b.contactEmail,
               authIp: ipAddress,
-              signatureBase64: sigData.split(',')[1],
+              signatureBase64: (sigData && typeof sigData === 'string') ? sigData.split(',')[1] : '',
               fromEmail: b.sentFromEmail,
               fromLabel: b.sentFromLabel,
               branding: currentSettings,
@@ -370,7 +371,7 @@ export default function AuthorizationPage() {
                                         <p className="text-[10px] text-muted-foreground uppercase font-bold">Departure</p>
                                         <p className="text-sm font-medium">{(()=>{
                                             const ds = booking.departureDate;
-                                            const [y, m, d] = ds.split('-');
+                                            const [y, m, d] = (ds && typeof ds === 'string') ? ds.split('-') : ['', '', ''];
                                             if (!y || !m || !d) return ds;
                                             return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString();
                                         })()}</p>
@@ -381,7 +382,7 @@ export default function AuthorizationPage() {
                                         <p className="text-[10px] text-muted-foreground uppercase font-bold">{booking.tripType === 'Round Trip' ? 'Return' : 'Arrival'}</p>
                                         <p className="text-sm font-medium">{(()=>{
                                             const ds = booking.arrivalDate;
-                                            const [y, m, d] = ds.split('-');
+                                            const [y, m, d] = (ds && typeof ds === 'string') ? ds.split('-') : ['', '', ''];
                                             if (!y || !m || !d) return ds;
                                             return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString();
                                         })()}</p>
